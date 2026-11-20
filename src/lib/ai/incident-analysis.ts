@@ -7,7 +7,7 @@ import { forecastSla } from "@/lib/sla";
 
 // --- SCHEMA ---
 
-const incidentAiSchema = z.object({
+export const incidentAiSchema = z.object({
   summary: z.string().min(1).max(600),
   recommendedTeam: z.string().refine(
     (team) => (RESOLVER_TEAMS as readonly string[]).includes(team),
