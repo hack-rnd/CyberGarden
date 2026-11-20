@@ -131,7 +131,7 @@ export function classifyGroups(
   const isCoordinatorTeam =
     assigneeTeam.trim().toLowerCase() === COORDINATOR_TEAM_NAME.toLowerCase();
 
-  if (priority === "critical" && isActive) {
+  if (priority === "critical" && !isClosed) {
     groups.push("CRITICAL");
   }
   if (isCoordinatorTeam && !isClosed && !isResolved) {
