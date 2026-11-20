@@ -136,7 +136,7 @@ const providers: Provider[] = [
       callOpenAiCompatible(
         "https://integrate.api.nvidia.com/v1",
         process.env.NVIDIA_API_KEY ?? "",
-        process.env.NVIDIA_MODEL ?? "meta/llama-3.3-70b-instruct",
+        process.env.NVIDIA_MODEL ?? "google/gemma-4-31b-it",
         system,
         prompt,
         signal,
