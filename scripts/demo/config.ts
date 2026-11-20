@@ -8,37 +8,32 @@ export function loadLocalEnv() {
   }
 }
 
-type Scalar = string | number
+export const coordinatorTeam = "КЦ ИТ Координаторы Массовых Инцидентов"
+export const mtsDemoId = "INC000099990001"
+export const mtsDemoSysId = "999000111222333444"
+export const legacyDemoId = "INC-DEMO-001"
+export const legacyTemplateId = "INC-009840"
 
-export type DemoMapping = {
-  arrayPath: readonly string[]
-  matchField: string
-  templateId: Scalar
-  createdFields: Readonly<Record<string, Scalar>>
-  priorityField: string
-  statusField: string
-  assignmentField: string
-  critical: Scalar
-  active: Scalar
-  resolved: Scalar
-  coordinators: Scalar
-}
-
-export const demoMapping: DemoMapping = {
-  arrayPath: [],
-  matchField: "id",
-  templateId: "INC-009840",
-  createdFields: {
-    id: "INC-DEMO-001",
-    title: "Демо: сбой воспроизведения эфиров",
-    description: "Учебный инцидент для проверки дашборда и оповещений.",
-    itsm_url: "",
-  },
-  priorityField: "priority",
-  statusField: "status",
-  assignmentField: "assignee_team",
-  critical: "Критический",
-  active: "В работе",
-  resolved: "Решен",
-  coordinators: "КЦ ИТ Координаторы Массовых Инцидентов",
+export function createMtsDemo(now: Date) {
+  return {
+    sysId: mtsDemoSysId,
+    id: mtsDemoId,
+    submitDate: now.toISOString(),
+    deadline: new Date(now.getTime() + 25 * 60_000).toISOString(),
+    state: "Выполняется",
+    stateEnum: "WorkInProgress",
+    stateId: 2,
+    priorityId: 4,
+    priority: "Наивысший",
+    urgencyId: 4,
+    impactId: 4,
+    productName: "Автопросматриватель TicTok",
+    service: "[Автопросматриватель TicTok] Процессор видео",
+    header: "Полная недоступность кластера обработки видео",
+    description: "Массовый отказ узлов обработки видеопотока. Срочно требуется координация и эскалация.",
+    assignedGroupName: "КЦ ИТ ЦП Billing Platform",
+    productUrl: null,
+    completionDate: null,
+    solution: null,
+  }
 }

@@ -82,24 +82,25 @@ async function main() {
   })
   bot.catch(({ error }) => console.error("Ошибка команды Telegram.", error instanceof GrammyError ? error.error_code : ""))
 
-  async function sendAlert(text: string, url?: string) {
+  async function sendAlert(text: string, url?: string): Promise<boolean> {
     for (let attempt = 0; attempt < 3 && !signal.aborted; attempt++) {
       try {
         await sender.sendMessage(recipient, text, {
           reply_markup: url ? new InlineKeyboard().url("Открыть в ITSM", url) : undefined,
           link_preview_options: { is_disabled: true },
         })
-        return
+        return true
       } catch (error) {
         const seconds = error instanceof GrammyError && error.error_code === 429
           ? error.parameters.retry_after : undefined
         if (attempt === 2 || seconds === undefined || seconds > 60) {
           console.error("Алерт не отправлен.", error instanceof GrammyError ? error.error_code : "Ошибка сети")
-          return
+          return false
         }
         await delay(seconds * 1000, undefined, { signal }).catch(() => undefined)
       }
     }
+    return false
   }
 
   const stop = () => {
@@ -117,9 +118,9 @@ async function main() {
         console.log(`Telegram @${username} запущен. Подключаю поток событий Next.js.`)
         stream = followStream(streamUrl, signal, async ({ events, incidents }) => {
           for (const event of events) {
-            if (alreadySeen(event.id)) continue
+            if (alreadySeen.has(event.id)) continue
             const alert = formatAlert(event, incidents, process.env.ITSM_URL_TEMPLATE)
-            await sendAlert(alert.text, alert.url)
+            if (await sendAlert(alert.text, alert.url)) alreadySeen.add(event.id)
           }
         })
       },
