@@ -7,8 +7,22 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-sans);
-  --font-heading: var(--font-heading);
+  --font-sans: var(--font-inter);
+  --font-heading: var(--font-unbounded);
+
+  --text-headline-lg: 2.25rem;
+  --text-headline-lg--line-height: 1.2;
+  --text-title-lg: 1.25rem;
+  --text-title-lg--line-height: 1.4;
+  --text-body-md: 1rem;
+  --text-body-md--line-height: 1.5;
+  --text-label-md: 0.875rem;
+  --text-label-md--line-height: 1.4;
+  --text-label-sm: 0.75rem;
+  --text-label-sm--line-height: 1.35;
+  --radius-control: 0.5rem;
+  --radius-panel: 0.75rem;
+  --radius-pill: 9999px;
 
   /* Фирменные токены Accessible Dynamism */
   --color-mts-red: #FF0032;
@@ -132,9 +146,9 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground font-sans;
+    @apply bg-background text-foreground font-sans text-body-md;
   }
   h1, h2, h3, h4 {
-    @apply font-heading;
+    @apply font-heading font-medium;
   }
 }

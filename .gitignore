@@ -48,3 +48,6 @@ dist/
 *.db-journal
 *.db-wal
 *.db-shm
+
+/data/incidents.demo.json
+/data/incidents.demo.json.*.tmp
