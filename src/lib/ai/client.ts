@@ -66,7 +66,7 @@ function extractJson(text: string): unknown {
 async function callGemini(system: string, prompt: string, signal: AbortSignal, jsonSchema?: Schema): Promise<string> {
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   const response = await ai.models.generateContent({
-    model: process.env.GEMINI_MODEL ?? "gemini-3.8-flash",
+    model: process.env.GEMINI_MODEL ?? "gemini-2.5-flash",
     contents: prompt,
     config: {
       systemInstruction: system,
@@ -108,15 +108,9 @@ async function callOpenAiCompatible(
   return content;
 }
 
-// --- PROVIDER CHAIN ---
+// --- PROVIDER CHAIN (groq first: fastest stable slot for live demo) ---
 
 const providers: Provider[] = [
-  {
-    name: "gemini",
-    envKey: "GEMINI_API_KEY",
-    timeoutMs: LLM_TIMEOUT_MS,
-    call: callGemini,
-  },
   {
     name: "groq",
     envKey: "GROQ_API_KEY",
@@ -132,9 +126,15 @@ const providers: Provider[] = [
       ),
   },
   {
+    name: "gemini",
+    envKey: "GEMINI_API_KEY",
+    timeoutMs: LLM_TIMEOUT_MS,
+    call: callGemini,
+  },
+  {
     name: "nvidia",
     envKey: "NVIDIA_API_KEY",
-    timeoutMs: 45_000,
+    timeoutMs: 12_000,
     call: (system, prompt, signal) =>
       callOpenRouter(
         process.env.NVIDIA_API_KEY ?? "",
@@ -175,7 +175,7 @@ async function postOpenRouter(
   prompt: string,
   signal: AbortSignal,
 ): Promise<string> {
-  const client = new OpenAI({ apiKey, baseURL: "https://openrouter.ai/api/v1", timeout: 45_000 });
+  const client = new OpenAI({ apiKey, baseURL: "https://openrouter.ai/api/v1", timeout: 12_000 });
   const completion = await client.chat.completions.create(
     {
       model,

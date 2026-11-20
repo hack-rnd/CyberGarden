@@ -11,7 +11,7 @@ export interface RuleRecommendation {
   matchedLabels: string[];
 }
 
-// --- PRODUCT ROUTING (frequency table from data/incidents.json) ---
+// --- PRODUCT ROUTING (from real MTS export character_problems.json) ---
 
 interface ProductRouting {
   resolver: ResolverTeam;
@@ -19,25 +19,25 @@ interface ProductRouting {
 }
 
 export const PRODUCT_ROUTING: Record<string, ProductRouting> = {
-  "Сеть доступа": {
-    resolver: "Техподдержка",
-    evidence: "инциденты продукта в выгрузке МТС назначены на Техподдержку",
+  "Автопросматриватель TicTok": {
+    resolver: "КЦ ИТ Media L2 KION",
+    evidence: "медиапросмотр относится к зоне Media L2 KION",
   },
-  "ТВ-платформа": {
-    resolver: "Команда Core",
-    evidence: "инциденты продукта в выгрузке МТС назначены на Команду Core",
+  "Акваланг для муравьев": {
+    resolver: "Дежурная смена ОГЭ МЦОД Санкт-Петербург",
+    evidence: "продукт обслуживается дежурной сменой МЦОД",
   },
-  "Биллинг": {
-    resolver: "Техподдержка",
-    evidence: "платёжные операции обрабатывает первая линия перед эскалацией в разработку",
+  "Летающий ковер": {
+    resolver: "КЦ ИТ OPS Аварии MSCP",
+    evidence: "аварийные ситуации платформы маршрутизируются в OPS Аварии MSCP",
   },
-  "Личный кабинет": {
-    resolver: "Команда Core",
-    evidence: "ядро авторизации и личного кабинета входит в зону ответственности Core",
+  "Страхование хомячков": {
+    resolver: "КЦ ИТ ЦП Billing Platform",
+    evidence: "страховые продукты обрабатывает Billing Platform",
   },
-  "Мобильный банк": {
-    resolver: "Команда Core",
-    evidence: "в выгрузке требуется передача в команду разработки платежей (Core)",
+  "Вечная зажигалка": {
+    resolver: "КЦ ИТ OPS Аварии ДС",
+    evidence: "инциденты продукта назначаются на OPS Аварии ДС",
   },
 };
 
@@ -54,19 +54,94 @@ interface KeywordRule {
 
 const KEYWORD_RULES: KeywordRule[] = [
   {
-    re: /пакет|потерь|канал|базов(ая|ых) станц|узел агрегац|деградац|сеть/i,
-    team: "Техподдержка",
-    label: "сетевые симптомы",
+    re: /vpn|туннел|шифрован/i,
+    team: "КЦ ББ ДИБ УРМС VPN Support",
+    label: "VPN и защищённые каналы",
   },
   {
-    re: /списан|платеж|оплат|тариф|сч[её]т|биллинг/i,
-    team: "Техподдержка",
-    label: "платёжные операции",
+    re: /active directory|ad|домен|уч[её]тн(ая|ых) запис|ldap|аутентификац|авторизац/i,
+    team: "КЦ ИТ Active Directory",
+    label: "доменная аутентификация и учётные записи",
   },
   {
-    re: /авторизац|sms|вход|кабинет|api|ядро|платформ|cdn|вещан|перевод|сбп|очеред/i,
-    team: "Команда Core",
-    label: "симптомы ядрового сервиса",
+    re: /биллинг|тарификац|списан|платеж|оплат|сч[её]т/i,
+    team: "КЦ ИТ ЦП Billing Platform",
+    label: "биллинг и тарификация",
+  },
+  {
+    re: /тариф|foris/i,
+    team: "КЦ ИТ ЦРМП ОРМП Foris Аварии Тарификация",
+    label: "аварии тарификации Foris",
+  },
+  {
+    re: /видео|медиа|kion|стрим|проигрыв|трансляц/i,
+    team: "КЦ ИТ Media L2 KION",
+    label: "медиасервисы и видео",
+  },
+  {
+    re: /мой мтс|приложение|мобильн/i,
+    team: "КЦ ИТ Мой МТС",
+    label: "приложение Мой МТС",
+  },
+  {
+    re: /vmware|виртуал|кластер|хостинг/i,
+    team: "КЦ ДОИ VMWare",
+    label: "виртуализация VMWare",
+  },
+  {
+    re: /san|storage|хранилищ|дисков|лун/i,
+    team: "КЦ ДОИ Администрирование SAN",
+    label: "системы хранения SAN",
+  },
+  {
+    re: /dc-net|стойк|маршрутиз|коммутатор|сетев/i,
+    team: "КЦ ТБ ДМиМС DC-NET Аварии",
+    label: "сетевое оборудование ЦОД",
+  },
+  {
+    re: /devops|ci\/cd|деплой|контейнер|kubernetes|docker/i,
+    team: "КЦ ИТ Развитие DEVOPS",
+    label: "инфраструктура CI/CD и контейнеры",
+  },
+  {
+    re: /каталог|product catalog|номенклатур/i,
+    team: "КЦ ИТ EP Product Catalog",
+    label: "продуктовый каталог",
+  },
+  {
+    re: /membrana/i,
+    team: "КЦ ИТ Поддержка Membrana",
+    label: "платформа Membrana",
+  },
+  {
+    re: /mscp|платформ/i,
+    team: "КЦ ИТ OPS Аварии MSCP",
+    label: "аварии платформы MSCP",
+  },
+  {
+    re: /simpleone|тикет|заявк/i,
+    team: "КЦ МТС Гильдия (SimpleOne)",
+    label: "процессы SimpleOne",
+  },
+  {
+    re: /медиаскаут|скaут/i,
+    team: "КЦ ИТ ОРД МедиаСкаут",
+    label: "сервис МедиаСкаут",
+  },
+  {
+    re: /тест|testops|qa/i,
+    team: "КЦ ИТ Allure TestOps Support",
+    label: "тестовая инфраструктура Allure TestOps",
+  },
+  {
+    re: /enablement/i,
+    team: "КЦ ИТ ЦП Enablement Platform",
+    label: "Enablement Platform",
+  },
+  {
+    re: /приморье|vladivostok|владивосток/i,
+    team: "ОГЭ Приморье",
+    label: "региональная эксплуатация Приморье",
   },
 ];
 
@@ -89,7 +164,7 @@ const DEFAULT_TEMPLATES = [
 // --- SCORING ---
 
 export function recommendTeam(incident: NormalizedIncident): RuleRecommendation {
-  const haystack = `${incident.title} ${incident.description}`;
+  const haystack = `${incident.product} ${incident.title} ${incident.description}`;
   const scores = new Map<ResolverTeam, number>();
   const matchedLabels: string[] = [];
 
@@ -105,7 +180,7 @@ export function recommendTeam(incident: NormalizedIncident): RuleRecommendation 
     }
   }
 
-  let best: ResolverTeam = routing?.resolver ?? "Техподдержка";
+  let best: ResolverTeam = routing?.resolver ?? "КЦ ИТ OPS Аварии MSCP";
   let bestScore = -1;
   for (const team of RESOLVER_TEAMS) {
     const score = scores.get(team) ?? 0;
@@ -126,7 +201,7 @@ export function recommendTeam(incident: NormalizedIncident): RuleRecommendation 
 
 export function buildTeamReason(
   incident: NormalizedIncident,
-  rec: RuleRecommendation
+  rec: RuleRecommendation,
 ): string {
   const templates =
     rec.source === "product"
@@ -156,7 +231,7 @@ function pickTemplate(seed: string, count: number): number {
 
 function fillTemplate(
   template: string,
-  slots: Record<string, string>
+  slots: Record<string, string>,
 ): string {
   return template.replace(/\{(\w+)\}/g, (_, key: string) => slots[key] ?? "");
 }

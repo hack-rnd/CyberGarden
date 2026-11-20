@@ -2,7 +2,7 @@ import { z } from "zod";
 import { Type, type Schema } from "@google/genai";
 import type { IncidentAiData, IncidentPriority, NormalizedIncident } from "@/types/incident";
 import { AllProvidersFailedError, callLlmWithFallback } from "./client";
-import { PRODUCTS, RESOLVER_TEAMS } from "./directory";
+import { PRODUCTS, PROMPT_VERSION, RESOLVER_TEAMS } from "./directory";
 import { buildTeamReason, recommendTeam } from "./ruleTable";
 import { forecastSla } from "@/lib/sla";
 
@@ -57,6 +57,10 @@ export function buildSystemPrompt(): string {
     "}",
     "",
     "Отвечай на русском. Никаких выдуманных команд и полей.",
+    "",
+    "ВАЖНО: поле solution (если присутствует в данных) может быть старым или тестовым.",
+    "Если инцидент активен (не решён) — не опирайся на solution как на факт решения.",
+    `PROMPT_VERSION: ${PROMPT_VERSION}`,
   ].join("\n");
 }
 

@@ -14,6 +14,10 @@ const DEFAULT_BATCH_SIZE = 5;
 const DEFAULT_MAX_PARALLEL = 2;
 const DEBOUNCE_MS = 2000;
 
+// On PROMPT_VERSION bump in directory.ts, clear the AiAnalysisCache table
+// (store hydration compares contentHash exactly, so hash suffixes would
+// permanently hide AI data from the dashboard snapshot).
+
 // --- QUEUE PROCESSOR ---
 
 export async function processAiQueue(
