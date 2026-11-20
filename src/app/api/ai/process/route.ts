@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { processAiQueue } from "@/lib/ai/processor";
+import { ensureAiScheduler } from "@/lib/ai/scheduler";
 
 // --- ROUTE CONFIG ---
 
@@ -9,6 +10,7 @@ export const dynamic = "force-dynamic";
 // --- POST HANDLER ---
 
 export async function POST(request: Request) {
+  ensureAiScheduler();
   try {
     const body = (await request.json().catch(() => ({}))) as { batchSize?: number };
     const batchSize =
