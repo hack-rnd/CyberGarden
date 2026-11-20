@@ -8,6 +8,11 @@ export type SaveAiPayload = Omit<IncidentAiData, "updatedAt">;
 
 // --- AI QUEUE HELPERS ---
 
+export async function getAllIncidents(): Promise<NormalizedIncident[]> {
+  await incidentStore.ensureInitialized();
+  return incidentStore.getSnapshot().incidents;
+}
+
 export async function getIncidentsPendingAi(): Promise<NormalizedIncident[]> {
   await incidentStore.ensureInitialized();
   const { incidents } = incidentStore.getSnapshot();

@@ -16,53 +16,104 @@ export const COORDINATOR_TEAM_NAME = "КЦ ИТ Координаторы Мас�
 
 const RawIncidentSchema = z
   .object({
+    sysId: z.string().optional(),
     id: z.union([z.string(), z.number()]).transform(String),
-    product: z.string().optional().default("Не указан"),
-    title: z.string().optional().default(""),
+    productName: z.string().optional(),
+    product: z.string().optional(),
+    service: z.string().nullable().optional(),
+    header: z.string().optional(),
+    title: z.string().optional(),
+    shortDescription: z.string().optional(),
     description: z.string().optional().default(""),
+    priorityId: z.number().optional(),
     priority: z.string().optional().default("Средний"),
-    status: z.string().optional().default("В работе"),
-    assignee_team: z.string().nullable().optional().default(""),
+    stateId: z.number().optional(),
+    stateEnum: z.string().optional(),
+    state: z.string().optional(),
+    status: z.string().optional(),
+    assignedGroupName: z.string().nullable().optional(),
+    assignee_team: z.string().nullable().optional(),
+    submitDate: z.string().optional(),
     created_at: z.string().optional(),
+    deadline: z.string().nullable().optional(),
     sla_deadline: z.string().nullable().optional(),
+    completionDate: z.string().nullable().optional(),
+    productUrl: z.string().nullable().optional(),
     itsm_url: z.string().optional(),
   })
   .passthrough();
 
-type RawIncident = z.infer<typeof RawIncidentSchema>;
-
 // --- NORMALIZATION HELPERS ---
 
-function mapPriority(raw: string): IncidentPriority {
+function mapPriority(
+  priorityId: number | undefined,
+  raw: string
+): IncidentPriority {
+  if (priorityId === 4) return "critical";
+  if (priorityId === 3) return "high";
+  if (priorityId === 2) return "medium";
+  if (priorityId === 1) return "low";
+
   const val = raw.toLowerCase();
-  if (val.includes("крит") || val === "1" || val === "p1" || val === "critical") {
+  if (
+    val.includes("наивысш") ||
+    val.includes("крит") ||
+    val === "4" ||
+    val === "p1" ||
+    val === "critical"
+  ) {
     return "critical";
   }
-  if (val.includes("высок") || val === "2" || val === "p2" || val === "high") {
+  if (val.includes("высок") || val === "3" || val === "p2" || val === "high") {
     return "high";
   }
-  if (val.includes("низк") || val === "4" || val === "p4" || val === "low") {
+  if (val.includes("низк") || val === "1" || val === "p4" || val === "low") {
     return "low";
   }
   return "medium";
 }
 
-function mapStatus(raw: string): IncidentStatus {
+function mapStatus(
+  stateId: number | undefined,
+  stateEnum: string | undefined,
+  raw: string
+): IncidentStatus {
+  if (stateId === 20) return "investigation";
+  if (stateId === 10) return "closed";
+  if (stateId === 7) return "resolved";
+  if (stateId === 2) return "in_progress";
+  if (stateId === 0) return "waiting";
+
+  const enumVal = (stateEnum ?? "").toLowerCase();
+  if (enumVal === "research") return "investigation";
+  if (enumVal === "closed") return "closed";
+  if (enumVal === "resolved") return "resolved";
+  if (enumVal === "workinprogress") return "in_progress";
+  if (enumVal === "assigned") return "waiting";
+
   const val = raw.toLowerCase();
-  if (val.includes("исследован") || val.includes("разбор") || val.includes("rca")) {
+  if (
+    val.includes("исследован") ||
+    val.includes("разбор") ||
+    val.includes("rca")
+  ) {
     return "investigation";
-  }
-  if (val.includes("реш") || val.includes("устран") || val.includes("resolved")) {
-    return "resolved";
   }
   if (val.includes("закрыт") || val.includes("closed")) {
     return "closed";
   }
-  if (val.includes("ожида") || val.includes("назнач") || val.includes("waiting")) {
-    return "waiting";
+  if (
+    val.includes("завершен") ||
+    val.includes("реш") ||
+    val.includes("resolved")
+  ) {
+    return "resolved";
   }
-  if (val.includes("нов") || val.includes("new")) {
-    return "new";
+  if (val.includes("выполня") || val.includes("в работе")) {
+    return "in_progress";
+  }
+  if (val.includes("назнач") || val.includes("ожида")) {
+    return "waiting";
   }
   return "in_progress";
 }
@@ -72,7 +123,11 @@ function computeSla(
   deadlineIso: string | null,
   status: IncidentStatus
 ): { remainingMs: number | null; slaStatus: SlaStatus } {
-  if (status === "resolved" || status === "closed" || status === "investigation") {
+  if (
+    status === "resolved" ||
+    status === "closed" ||
+    status === "investigation"
+  ) {
     return { remainingMs: null, slaStatus: "completed" };
   }
   if (!deadlineIso) {
@@ -92,7 +147,8 @@ function computeSla(
     return { remainingMs, slaStatus: "breached" };
   }
 
-  const totalWindow = !Number.isNaN(created) && deadline > created ? deadline - created : 3600_000;
+  const totalWindow =
+    !Number.isNaN(created) && deadline > created ? deadline - created : 3600_000;
   const ratio = remainingMs / totalWindow;
 
   if (remainingMs <= 15 * 60_000 || ratio <= 0.15) {
@@ -104,14 +160,21 @@ function computeSla(
   return { remainingMs, slaStatus: "ok" };
 }
 
-function buildContentHash(raw: RawIncident): string {
+function buildContentHash(
+  product: string,
+  title: string,
+  description: string,
+  priority: string,
+  status: string,
+  assigneeTeam: string
+): string {
   const payload = [
-    raw.product,
-    raw.title,
-    raw.description,
-    raw.priority,
-    raw.status,
-    raw.assignee_team ?? "",
+    product,
+    title,
+    description,
+    priority,
+    status,
+    assigneeTeam,
   ].join("|");
   return crypto.createHash("sha256").update(payload).digest("hex");
 }
@@ -127,17 +190,17 @@ export function classifyGroups(
   const isClosed = status === "closed";
   const isResolved = status === "resolved";
   const isInvestigation = status === "investigation";
-  const isActive = !isClosed && !isResolved && !isInvestigation;
+  const isActiveWork = !isClosed && !isResolved && !isInvestigation;
   const isCoordinatorTeam =
     assigneeTeam.trim().toLowerCase() === COORDINATOR_TEAM_NAME.toLowerCase();
 
-  if (priority === "critical" && !isClosed) {
+  if (priority === "critical" && isActiveWork) {
     groups.push("CRITICAL");
   }
   if (isCoordinatorTeam && !isClosed && !isResolved) {
     groups.push("ASSIGNED_TO_COORDINATORS");
   }
-  if (priority === "high" && isActive) {
+  if (priority === "high" && isActiveWork) {
     groups.push("HIGH_PRIORITY");
   }
   if (isInvestigation) {
@@ -163,37 +226,64 @@ export function parseMtsJson(rawData: unknown): NormalizedIncident[] {
     if (!parsed.success) continue;
 
     const raw = parsed.data;
-    const priority = mapPriority(raw.priority);
-    const status = mapStatus(raw.status);
-    const assigneeTeam = raw.assignee_team?.trim() || "Не назначена";
-    const createdAt = raw.created_at ?? new Date().toISOString();
-    const slaDeadline = raw.sla_deadline ?? null;
+    const rawStatus = raw.state ?? raw.status ?? "Выполняется";
+    const priority = mapPriority(raw.priorityId, raw.priority);
+    const status = mapStatus(raw.stateId, raw.stateEnum, rawStatus);
+    const product = raw.productName ?? raw.product ?? "Не указан";
+    const title =
+      raw.header ??
+      raw.title ??
+      raw.shortDescription ??
+      raw.description.slice(0, 80);
+    const assigneeTeam =
+      (raw.assignedGroupName ?? raw.assignee_team ?? "").trim() ||
+      "Не назначена";
+    const createdAt =
+      raw.submitDate ?? raw.created_at ?? new Date().toISOString();
+    const slaDeadline = raw.deadline ?? raw.sla_deadline ?? null;
 
-    const { remainingMs, slaStatus } = computeSla(createdAt, slaDeadline, status);
+    const { remainingMs, slaStatus } = computeSla(
+      createdAt,
+      slaDeadline,
+      status
+    );
     const groups = classifyGroups(priority, status, assigneeTeam);
     const isActive = status !== "resolved" && status !== "closed";
-    const isRecentlyResolvedCritical = priority === "critical" && status === "resolved";
+    const isRecentlyResolvedCritical =
+      priority === "critical" && status === "resolved";
+    const itsmTarget = raw.sysId || raw.id;
+    const itsmUrl =
+      raw.itsm_url ||
+      raw.productUrl ||
+      `https://simpleone.mts.ru/record/itsm_incident/${encodeURIComponent(itsmTarget)}`;
 
     result.push({
       id: raw.id,
       code: raw.id,
-      product: raw.product,
-      title: raw.title || raw.description.slice(0, 80),
+      product,
+      title,
       description: raw.description,
       priority,
       rawPriority: raw.priority,
       status,
-      rawStatus: raw.status,
+      rawStatus,
       assigneeTeam,
       createdAt,
       slaDeadline,
       slaRemainingMs: remainingMs,
       slaStatus,
-      itsmUrl: raw.itsm_url || `https://itsm.mts.ru/incidents/${encodeURIComponent(raw.id)}`,
+      itsmUrl,
       groups,
       isActive,
       isRecentlyResolvedCritical,
-      contentHash: buildContentHash(raw),
+      contentHash: buildContentHash(
+        product,
+        title,
+        raw.description,
+        raw.priority,
+        rawStatus,
+        assigneeTeam
+      ),
       ai: null,
     });
   }
@@ -203,7 +293,9 @@ export function parseMtsJson(rawData: unknown): NormalizedIncident[] {
 
 // --- AGGREGATES ---
 
-export function buildDashboardSummary(incidents: NormalizedIncident[]): DashboardSummary {
+export function buildDashboardSummary(
+  incidents: NormalizedIncident[]
+): DashboardSummary {
   let totalActive = 0;
   let criticalCount = 0;
   let assignedToCoordinatorsCount = 0;
@@ -215,12 +307,16 @@ export function buildDashboardSummary(incidents: NormalizedIncident[]): Dashboar
 
   for (const inc of incidents) {
     if (inc.isActive) totalActive++;
-    if (inc.groups.includes("CRITICAL") && inc.isActive) criticalCount++;
-    if (inc.groups.includes("ASSIGNED_TO_COORDINATORS")) assignedToCoordinatorsCount++;
+    if (inc.groups.includes("CRITICAL")) criticalCount++;
+    if (inc.groups.includes("ASSIGNED_TO_COORDINATORS")) {
+      assignedToCoordinatorsCount++;
+    }
     if (inc.groups.includes("HIGH_PRIORITY")) highPriorityCount++;
     if (inc.groups.includes("INVESTIGATION")) investigationCount++;
     if (inc.status === "in_progress") inProgressCount++;
-    if (inc.slaStatus === "breached") breachedSlaCount++;
+    if (inc.isActive && inc.slaDeadline && inc.slaStatus === "breached") {
+      breachedSlaCount++;
+    }
 
     if (inc.isActive && inc.slaRemainingMs !== null && inc.slaRemainingMs > 0) {
       if (nearestSlaMs === null || inc.slaRemainingMs < nearestSlaMs) {
@@ -241,7 +337,9 @@ export function buildDashboardSummary(incidents: NormalizedIncident[]): Dashboar
   };
 }
 
-export function buildActivity24h(incidents: NormalizedIncident[]): ActivityPoint[] {
+export function buildActivity24h(
+  incidents: NormalizedIncident[]
+): ActivityPoint[] {
   const buckets = new Map<string, ActivityPoint>();
   const now = new Date();
 
@@ -260,7 +358,9 @@ export function buildActivity24h(incidents: NormalizedIncident[]): ActivityPoint
 
     bucket.created++;
     if (inc.priority === "critical") bucket.critical++;
-    if (inc.status === "resolved" || inc.status === "closed") bucket.resolved++;
+    if (inc.status === "resolved" || inc.status === "closed") {
+      bucket.resolved++;
+    }
   }
 
   return Array.from(buckets.values());
