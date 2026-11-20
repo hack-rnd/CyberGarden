@@ -32,6 +32,7 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
 # vercel
 .vercel
@@ -48,6 +49,13 @@ dist/
 *.db-journal
 *.db-wal
 *.db-shm
+
+/data/incidents.backup.json
+/data/*.demo.lock
+/data/incidents.json.*.tmp
+/data/incidents.json.*.tmp.backup
+/data/character_problems.json.*.tmp
+/data/character_problems.json.*.tmp.backup
 
 /data/incidents.demo.json
 /data/incidents.demo.json.*.tmp

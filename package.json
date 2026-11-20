@@ -8,11 +8,11 @@
     "start": "next start",
     "lint": "eslint",
     "contract:emit": "prisma contract emit",
-    "demo:reset": "node scripts/demo.mjs reset",
-    "demo:critical": "node scripts/demo.mjs critical",
-    "demo:assign": "node scripts/demo.mjs assign",
-    "demo:resolve": "node scripts/demo.mjs resolve",
-    "start:demo": "node scripts/demo.mjs serve"
+    "bot:dev": "tsx src/bot/index.ts",
+    "demo:critical": "tsx scripts/demo/cli.ts critical",
+    "demo:assign": "tsx scripts/demo/cli.ts assign",
+    "demo:resolve": "tsx scripts/demo/cli.ts resolve",
+    "demo:reset": "tsx scripts/demo/cli.ts reset"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
@@ -21,6 +21,7 @@
     "class-variance-authority": "^0.7.1",
     "cn": "^0.5.2",
     "dotenv": "^18.0.10",
+    "grammy": "^1.46.0",
     "lucide-react": "^1.77.0",
     "next": "16.4.6",
     "radix-ui": "^1.8.1",
