@@ -3,6 +3,7 @@ import type { IncidentAiData, IncidentPriority, NormalizedIncident } from "@/typ
 import { AllProvidersFailedError, callLlmWithFallback } from "./client";
 import { PRODUCTS, RESOLVER_TEAMS } from "./directory";
 import { buildTeamReason, recommendTeam } from "./ruleTable";
+import { forecastSla } from "@/lib/sla";
 
 // --- SCHEMA ---
 
@@ -113,26 +114,23 @@ const RISK_BY_PRIORITY: Record<IncidentPriority, number> = {
 };
 
 export function analyzeIncidentRuleBased(incident: NormalizedIncident): IncidentAiData {
-  let riskScore = RISK_BY_PRIORITY[incident.priority] ?? 35;
-  const remaining = incident.slaRemainingMs;
-  const riskFactors: string[] = [`приоритет «${incident.rawPriority || incident.priority}»`];
+  const forecast = forecastSla({
+    createdAtIso: incident.createdAt,
+    slaDeadlineIso: incident.slaDeadline,
+    status: incident.status,
+    assigneeTeam: incident.assigneeTeam,
+    isCoordinatorAssigned: incident.groups.includes("ASSIGNED_TO_COORDINATORS"),
+  });
 
-  if (remaining !== null) {
-    if (remaining <= 0) {
-      riskScore = Math.min(100, riskScore + 20);
-      riskFactors.push("SLA просрочен");
-    } else if (remaining < 30 * 60_000) {
-      riskScore = Math.min(100, riskScore + 15);
-      riskFactors.push("до SLA меньше 30 минут");
-    } else if (remaining < 120 * 60_000) {
-      riskScore = Math.min(100, riskScore + 5);
-      riskFactors.push("SLA горит (меньше 2 часов)");
-    } else {
-      riskFactors.push("запас по SLA");
-    }
-  } else {
-    riskFactors.push("SLA не задан");
-  }
+  let riskScore = Math.max(
+    RISK_BY_PRIORITY[incident.priority] ?? 35,
+    forecast.breachRiskPct,
+  );
+  const riskFactors: string[] = [
+    `приоритет «${incident.rawPriority || incident.priority}»`,
+    ...forecast.factors,
+  ];
+
   if (incident.groups.includes("CRITICAL")) {
     riskScore = Math.max(riskScore, 85);
     riskFactors.push("инцидент в группе CRITICAL");
@@ -145,11 +143,11 @@ export function analyzeIncidentRuleBased(incident: NormalizedIncident): Incident
   const teamReason = buildTeamReason(incident, rec);
 
   const slaText =
-    remaining === null
+    forecast.remainingMs === null
       ? "SLA не задан"
-      : remaining <= 0
-        ? `SLA просрочен на ${Math.ceil(-remaining / 60_000)} мин`
-        : `остаток SLA ${Math.ceil(remaining / 60_000)} мин`;
+      : forecast.remainingMs <= 0
+        ? `SLA просрочен на ${Math.ceil(-forecast.remainingMs / 60_000)} мин`
+        : `остаток SLA ${Math.ceil(forecast.remainingMs / 60_000)} мин`;
 
   return {
     summary: `Инцидент «${incident.title}» на продукте ${incident.product}. Приоритет: ${incident.priority}.`,
