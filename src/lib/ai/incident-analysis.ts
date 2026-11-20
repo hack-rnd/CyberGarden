@@ -1,33 +1,63 @@
 import { z } from "zod";
 import type { IncidentAiData, IncidentPriority, NormalizedIncident } from "@/types/incident";
 import { AllProvidersFailedError, callLlmWithFallback } from "./client";
-
-// --- TEAM DIRECTORY ---
-
-export const TEAM_DIRECTORY = [
-  "Команда Core",
-  "Техподдержка",
-  "Биллинг",
-  "Сетевая инфраструктура",
-] as const;
+import { PRODUCTS, RESOLVER_TEAMS } from "./directory";
 
 // --- SCHEMA ---
 
 const incidentAiSchema = z.object({
   summary: z.string().min(1).max(600),
   recommendedTeam: z.string().refine(
-    (team) => (TEAM_DIRECTORY as readonly string[]).includes(team),
-    { message: "recommendedTeam must be from TEAM_DIRECTORY" },
+    (team) => (RESOLVER_TEAMS as readonly string[]).includes(team),
+    { message: "recommendedTeam must be from RESOLVER_TEAMS" },
   ),
+  teamReason: z.string().min(1).max(300),
   riskScore: z.number().int().min(0).max(100),
   riskLevel: z.enum(["low", "medium", "high"]),
   riskReason: z.string().min(1).max(1000),
-  handoffMessage: z.string().min(1).max(600),
+  handoffBody: z.string().min(1).max(800),
 });
 
 type LlmAnalysisPayload = z.infer<typeof incidentAiSchema>;
 
-// --- PROMPT ---
+// --- SYSTEM PROMPT ---
+
+export function buildSystemPrompt(): string {
+  return [
+    "Ты — ИИ-ассистент координатора массовых инцидентов МТС.",
+    "Координатор следит за сотнями инцидентов и должен за секунды понимать:",
+    "что случилось, кому передать задачу и не перерастёт ли инцидент в критический.",
+    "",
+    "Справочник команд-исполнителей (рекомендуй ТОЛЬКО из него, точное название):",
+    ...RESOLVER_TEAMS.map((team) => `- ${team}`),
+    "",
+    "Продукты ландшафта (для контекста):",
+    ...PRODUCTS.map((product) => `- ${product}`),
+    "",
+    "Правила оценки риска (riskScore, целое 0-100):",
+    "- 80-100: критический приоритет, SLA просрочен или горит, массовый отказ денежного/ядрового сервиса",
+    "- 50-79: высокий приоритет или деградация ключевого сервиса при живом SLA",
+    "- 20-49: локальная проблема, есть запас по SLA",
+    "- 0-19: минимальные последствия",
+    "riskLevel должен быть согласован со score: high >= 70, medium >= 40, иначе low.",
+    "riskReason: объясни, ПОЧЕМУ инцидент может стать критическим (или почему вряд ли).",
+    "",
+    "Формат ответа — строго JSON без markdown-ограды:",
+    "{",
+    '  "summary": "суть инцидента в 1-2 предложениях",',
+    '  "recommendedTeam": "точное название команды из справочника",',
+    '  "teamReason": "одно предложение: почему именно эта команда",',
+    '  "riskScore": 0-100,',
+    '  "riskLevel": "low" | "medium" | "high",',
+    '  "riskReason": "почему инцидент может стать критическим",',
+    '  "handoffBody": "текст передачи команде: суть, симптомы, срочность"',
+    "}",
+    "",
+    "Отвечай на русском. Никаких выдуманных команд и полей.",
+  ].join("\n");
+}
+
+// --- USER PROMPT ---
 
 export function buildIncidentPrompt(incident: NormalizedIncident): string {
   const slaLine =
@@ -36,20 +66,7 @@ export function buildIncidentPrompt(incident: NormalizedIncident): string {
       : `SLA: дедлайн ${incident.slaDeadline}, осталось ${Math.ceil(incident.slaRemainingMs / 60_000)} мин`;
 
   return [
-    "Проанализируй инцидент и верни строго JSON по схеме:",
-    "{",
-    '  "summary": "краткая суть проблемы для координатора (1-2 предложения)",',
-    '  "recommendedTeam": "одна из команд справочника",',
-    '  "riskScore": число 0-100 — риск перерастания в критический,',
-    '  "riskLevel": "low" | "medium" | "high",',
-    '  "riskReason": "обоснование оценки риска",',
-    '  "handoffMessage": "готовый текст передачи инцидента рекомендованной команде (1-2 предложения)"',
-    "}",
-    "",
-    "Справочник команд (выбирай только из него):",
-    ...TEAM_DIRECTORY.map((team) => `- ${team}`),
-    "",
-    "Данные инцидента:",
+    "Проанализируй инцидент:",
     `- Продукт: ${incident.product}`,
     `- Название: ${incident.title}`,
     `- Описание: ${incident.description}`,
@@ -59,20 +76,29 @@ export function buildIncidentPrompt(incident: NormalizedIncident): string {
     `- ${slaLine}`,
     `- Группы на дашборде: ${incident.groups.join(", ") || "нет"}`,
     "",
-    "Правила: учитывай приоритет, остаток SLA, тип продукта и описание.",
-    "Если инцидент назначен на координаторов, рекомендуй команду для передачи.",
-    "Отвечай на русском. Не выдумывай команды вне справочника.",
+    "Если инцидент назначен на координаторов — рекомендуй команду для передачи.",
   ].join("\n");
 }
 
 // --- LLM ANALYSIS ---
 
 function toAiData(payload: LlmAnalysisPayload, provider: string): IncidentAiData {
-  return { ...payload, provider, updatedAt: new Date().toISOString() };
+  return {
+    summary: payload.summary,
+    recommendedTeam: payload.recommendedTeam,
+    riskScore: payload.riskScore,
+    riskLevel: payload.riskLevel,
+    riskReason: payload.riskReason,
+    handoffMessage: `Команда: ${payload.recommendedTeam}. ${payload.teamReason}.\n\n${payload.handoffBody}`,
+    provider,
+    updatedAt: new Date().toISOString(),
+  };
 }
 
 export async function analyzeIncident(incident: NormalizedIncident): Promise<IncidentAiData> {
-  const result = await callLlmWithFallback(buildIncidentPrompt(incident), incidentAiSchema);
+  const result = await callLlmWithFallback(buildIncidentPrompt(incident), incidentAiSchema, {
+    system: buildSystemPrompt(),
+  });
   return toAiData(result.data, result.provider);
 }
 
@@ -85,10 +111,10 @@ const RISK_BY_PRIORITY: Record<IncidentPriority, number> = {
   low: 15,
 };
 
-const TEAM_BY_KEYWORD: [RegExp, (typeof TEAM_DIRECTORY)[number]][] = [
-  [/биллинг|платеж|оплат|charging/i, "Биллинг"],
-  [/сеть|network|базовая станция|канал|dns|dhcp/i, "Сетевая инфраструктура"],
-  [/ядро|core|платформ|api/i, "Команда Core"],
+const TEAM_BY_KEYWORD: [RegExp, (typeof RESOLVER_TEAMS)[number]][] = [
+  [/биллинг|платеж|оплат|списан/i, "Техподдержка"],
+  [/сеть|канал|пакет|потеря|базовая/i, "Техподдержка"],
+  [/кабинет|банк|тв|платформ|api|ядро/i, "Команда Core"],
 ];
 
 export function analyzeIncidentRuleBased(incident: NormalizedIncident): IncidentAiData {
@@ -111,6 +137,10 @@ export function analyzeIncidentRuleBased(incident: NormalizedIncident): Incident
   const matched = TEAM_BY_KEYWORD.find(([re]) => re.test(haystack));
   const recommendedTeam = matched?.[1] ?? "Техподдержка";
 
+  const teamReason = matched
+    ? `Ключевые слова указывают на профиль команды «${recommendedTeam}».`
+    : "Профиль команды не определён по ключевым словам, назначена линия первой поддержки.";
+
   const slaText =
     remaining === null ? "SLA не задан" : `остаток SLA ${Math.ceil(remaining / 60_000)} мин`;
 
@@ -120,7 +150,7 @@ export function analyzeIncidentRuleBased(incident: NormalizedIncident): Incident
     riskScore,
     riskLevel,
     riskReason: `Оценка по правилам: приоритет ${incident.priority}, ${slaText}, группы: ${incident.groups.join(", ") || "нет"}.`,
-    handoffMessage: `Передайте в «${recommendedTeam}»: ${incident.title}. ${slaText}.`,
+    handoffMessage: `Команда: ${recommendedTeam}. ${teamReason}\n\nПрошу принять инцидент «${incident.title}» (${incident.product}). ${slaText}. Подробности: ${incident.itsmUrl}`,
     provider: "rule-based",
     updatedAt: new Date().toISOString(),
   };

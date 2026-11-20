@@ -17,6 +17,11 @@ export interface LlmResult<T> {
   attempts: LlmAttempt[];
 }
 
+export interface LlmCallOptions {
+  system?: string;
+  timeoutMs?: number;
+}
+
 export class AllProvidersFailedError extends Error {
   readonly attempts: LlmAttempt[];
 
@@ -34,8 +39,11 @@ export class AllProvidersFailedError extends Error {
 interface Provider {
   name: string;
   envKey: string;
-  call: (prompt: string, signal: AbortSignal) => Promise<string>;
+  call: (system: string, prompt: string, signal: AbortSignal) => Promise<string>;
 }
+
+const DEFAULT_SYSTEM =
+  "Ты — ассистент координатора инцидентов МТС. Отвечай только валидным JSON без пояснений и без markdown-разметки.";
 
 function log(message: string, meta?: Record<string, unknown>): void {
   console.log(`[llm] ${message}`, meta ?? "");
@@ -51,12 +59,13 @@ function extractJson(text: string): unknown {
   return JSON.parse(trimmed.slice(start, end + 1));
 }
 
-async function callGemini(prompt: string, signal: AbortSignal): Promise<string> {
+async function callGemini(system: string, prompt: string, signal: AbortSignal): Promise<string> {
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   const response = await ai.models.generateContent({
     model: process.env.GEMINI_MODEL ?? "gemini-3.8-flash",
     contents: prompt,
     config: {
+      systemInstruction: system,
       responseMimeType: "application/json",
       abortSignal: signal,
     },
@@ -75,15 +84,12 @@ async function callOpenAiCompatible(
   baseUrl: string,
   apiKey: string,
   model: string,
+  system: string,
   prompt: string,
   signal: AbortSignal,
 ): Promise<string> {
   const messages: OpenAiCompatibleMessage[] = [
-    {
-      role: "system",
-      content:
-        "Ты — ассистент координатора инцидентов МТС. Отвечай только валидным JSON без пояснений и без markdown-разметки.",
-    },
+    { role: "system", content: system },
     { role: "user", content: prompt },
   ];
 
@@ -119,11 +125,12 @@ const providers: Provider[] = [
   {
     name: "groq",
     envKey: "GROQ_API_KEY",
-    call: (prompt, signal) =>
+    call: (system, prompt, signal) =>
       callOpenAiCompatible(
         "https://api.groq.com/openai/v1",
         process.env.GROQ_API_KEY ?? "",
         process.env.GROQ_MODEL ?? "openai/gpt-oss-120b",
+        system,
         prompt,
         signal,
       ),
@@ -136,11 +143,12 @@ const providers: Provider[] = [
   {
     name: "nvidia",
     envKey: "NVIDIA_API_KEY",
-    call: (prompt, signal) =>
+    call: (system, prompt, signal) =>
       callOpenAiCompatible(
         "https://integrate.api.nvidia.com/v1",
         process.env.NVIDIA_API_KEY ?? "",
         process.env.NVIDIA_MODEL ?? "meta/llama-3.3-70b-instruct",
+        system,
         prompt,
         signal,
       ),
@@ -150,8 +158,10 @@ const providers: Provider[] = [
 export async function callLlmWithFallback<S extends z.ZodTypeAny>(
   prompt: string,
   schema: S,
-  timeoutMs: number = LLM_TIMEOUT_MS,
+  options: LlmCallOptions = {},
 ): Promise<LlmResult<z.infer<S>>> {
+  const system = options.system ?? DEFAULT_SYSTEM;
+  const timeoutMs = options.timeoutMs ?? LLM_TIMEOUT_MS;
   const attempts: LlmAttempt[] = [];
 
   for (const provider of providers) {
@@ -163,7 +173,7 @@ export async function callLlmWithFallback<S extends z.ZodTypeAny>(
     const startedAt = Date.now();
     try {
       const signal = AbortSignal.timeout(timeoutMs);
-      const raw = await provider.call(prompt, signal);
+      const raw = await provider.call(system, prompt, signal);
       const parsed = schema.parse(extractJson(raw));
       const latencyMs = Date.now() - startedAt;
 
