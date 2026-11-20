@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { forecastSla } from "@/lib/sla";
 import { incidentStore } from "@/lib/mts/store";
-import { ensureAiScheduler } from "@/lib/ai/scheduler";
+import { ensureAiWorker } from "@/lib/ai/worker";
 import type { IncidentAiData, NormalizedIncident } from "@/types/incident";
 
 // --- ROUTE CONFIG ---
@@ -38,7 +38,7 @@ interface AiDigest {
 // --- GET HANDLER ---
 
 export async function GET() {
-  ensureAiScheduler();
+  ensureAiWorker();
   await incidentStore.ensureInitialized();
   const { incidents } = incidentStore.getSnapshot();
 

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { Type, type Schema } from "@google/genai";
 import type { IncidentAiData, IncidentPriority, NormalizedIncident } from "@/types/incident";
 import { AllProvidersFailedError, callLlmWithFallback } from "./client";
 import { PRODUCTS, RESOLVER_TEAMS } from "./directory";
@@ -97,9 +98,32 @@ function toAiData(payload: LlmAnalysisPayload, provider: string): IncidentAiData
   };
 }
 
+const GEMINI_RESPONSE_SCHEMA: Schema = {
+  type: Type.OBJECT,
+  properties: {
+    summary: { type: Type.STRING },
+    recommendedTeam: { type: Type.STRING },
+    teamReason: { type: Type.STRING },
+    riskScore: { type: Type.INTEGER },
+    riskLevel: { type: Type.STRING, enum: ["low", "medium", "high"] },
+    riskReason: { type: Type.STRING },
+    handoffBody: { type: Type.STRING },
+  },
+  required: [
+    "summary",
+    "recommendedTeam",
+    "teamReason",
+    "riskScore",
+    "riskLevel",
+    "riskReason",
+    "handoffBody",
+  ],
+};
+
 export async function analyzeIncident(incident: NormalizedIncident): Promise<IncidentAiData> {
   const result = await callLlmWithFallback(buildIncidentPrompt(incident), incidentAiSchema, {
     system: buildSystemPrompt(),
+    jsonSchema: GEMINI_RESPONSE_SCHEMA,
   });
   return toAiData(result.data, result.provider);
 }

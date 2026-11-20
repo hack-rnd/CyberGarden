@@ -1,4 +1,6 @@
+import { incidentStore } from "@/lib/mts/store";
 import {
+  getIncidentById,
   getIncidentsPendingAi,
   saveAiAnalysis,
   type SaveAiPayload,
@@ -10,6 +12,7 @@ import { analyzeIncidentSafe } from "./incident-analysis";
 
 const DEFAULT_BATCH_SIZE = 5;
 const DEFAULT_MAX_PARALLEL = 2;
+const DEBOUNCE_MS = 2000;
 
 // --- QUEUE PROCESSOR ---
 
@@ -30,6 +33,56 @@ export async function processAiQueue(
   });
 
   return batch.length;
+}
+
+export async function analyzeIncidentById(incidentId: string): Promise<IncidentAiData | null> {
+  const incident = await getIncidentById(incidentId);
+  if (!incident) return null;
+
+  const data = await analyzeIncidentSafe(incident);
+  await saveAiAnalysis(incident.id, incident.contentHash, toPayload(data));
+  return data;
+}
+
+// --- AUTO TRIGGER ---
+
+interface WorkerState {
+  started: boolean;
+  timer: NodeJS.Timeout | null;
+}
+
+const globalForWorker = globalThis as unknown as {
+  aiWorker: WorkerState | undefined;
+};
+
+function state(): WorkerState {
+  if (!globalForWorker.aiWorker) {
+    globalForWorker.aiWorker = { started: false, timer: null };
+  }
+  return globalForWorker.aiWorker;
+}
+
+export function ensureAiWorker(): void {
+  const worker = state();
+  if (worker.started) return;
+  worker.started = true;
+
+  void incidentStore
+    .ensureInitialized()
+    .then(() => {
+      void processAiQueue().catch(() => undefined);
+      incidentStore.subscribe(() => schedule());
+    })
+    .catch(() => undefined);
+}
+
+function schedule(): void {
+  const worker = state();
+  if (worker.timer) clearTimeout(worker.timer);
+  worker.timer = setTimeout(() => {
+    worker.timer = null;
+    void processAiQueue().catch(() => undefined);
+  }, DEBOUNCE_MS);
 }
 
 // --- HELPERS ---

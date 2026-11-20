@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { GoogleGenAI } from "@google/genai";
+import OpenAI from "openai";
+import { GoogleGenAI, type Schema } from "@google/genai";
 
 export const LLM_TIMEOUT_MS = 6000;
 
@@ -17,9 +18,10 @@ export interface LlmResult<T> {
   attempts: LlmAttempt[];
 }
 
-export interface LlmCallOptions {
+interface LlmCallOptions {
   system?: string;
   timeoutMs?: number;
+  jsonSchema?: Schema;
 }
 
 export class AllProvidersFailedError extends Error {
@@ -27,7 +29,7 @@ export class AllProvidersFailedError extends Error {
 
   constructor(attempts: LlmAttempt[]) {
     super(
-      `Все LLM-провайдеры недоступны: ${attempts
+      `All LLM providers failed: ${attempts
         .map((a) => `${a.provider} (${a.error ?? "unknown"})`)
         .join("; ")}`,
     );
@@ -39,11 +41,11 @@ export class AllProvidersFailedError extends Error {
 interface Provider {
   name: string;
   envKey: string;
-  call: (system: string, prompt: string, signal: AbortSignal) => Promise<string>;
+  call: (system: string, prompt: string, signal: AbortSignal, jsonSchema?: Schema) => Promise<string>;
 }
 
 const DEFAULT_SYSTEM =
-  "Ты — ассистент координатора инцидентов МТС. Отвечай только валидным JSON без пояснений и без markdown-разметки.";
+  "You are an MTS incident coordinator assistant. Reply with valid JSON only, no markdown fences.";
 
 function log(message: string, meta?: Record<string, unknown>): void {
   console.log(`[llm] ${message}`, meta ?? "");
@@ -54,12 +56,14 @@ function extractJson(text: string): unknown {
   const start = trimmed.indexOf("{");
   const end = trimmed.lastIndexOf("}");
   if (start === -1 || end === -1 || end <= start) {
-    throw new Error("В ответе нет JSON-объекта");
+    throw new Error("No JSON object in response");
   }
   return JSON.parse(trimmed.slice(start, end + 1));
 }
 
-async function callGemini(system: string, prompt: string, signal: AbortSignal): Promise<string> {
+// --- GEMINI ---
+
+async function callGemini(system: string, prompt: string, signal: AbortSignal, jsonSchema?: Schema): Promise<string> {
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   const response = await ai.models.generateContent({
     model: process.env.GEMINI_MODEL ?? "gemini-3.8-flash",
@@ -67,18 +71,16 @@ async function callGemini(system: string, prompt: string, signal: AbortSignal): 
     config: {
       systemInstruction: system,
       responseMimeType: "application/json",
+      ...(jsonSchema ? { responseSchema: jsonSchema } : {}),
       abortSignal: signal,
     },
   });
   const text = response.text;
-  if (!text) throw new Error("Пустой ответ Gemini");
+  if (!text) throw new Error("Empty Gemini response");
   return text;
 }
 
-interface OpenAiCompatibleMessage {
-  role: "system" | "user";
-  content: string;
-}
+// --- OPENAI-COMPATIBLE (GROQ / NVIDIA) ---
 
 async function callOpenAiCompatible(
   baseUrl: string,
@@ -88,40 +90,32 @@ async function callOpenAiCompatible(
   prompt: string,
   signal: AbortSignal,
 ): Promise<string> {
-  const messages: OpenAiCompatibleMessage[] = [
-    { role: "system", content: system },
-    { role: "user", content: prompt },
-  ];
-
-  const response = await fetch(`${baseUrl}/chat/completions`, {
-    method: "POST",
-    signal,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
+  const client = new OpenAI({ apiKey, baseURL: baseUrl, timeout: LLM_TIMEOUT_MS });
+  const completion = await client.chat.completions.create(
+    {
       model,
-      messages,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: prompt },
+      ],
       response_format: { type: "json_object" },
       temperature: 0.2,
-    }),
-  });
-
-  if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    throw new Error(`HTTP ${response.status}: ${body.slice(0, 200)}`);
-  }
-
-  const payload = (await response.json()) as {
-    choices?: { message?: { content?: string } }[];
-  };
-  const content = payload.choices?.[0]?.message?.content;
-  if (!content) throw new Error("Пустой ответ провайдера");
+    },
+    { signal },
+  );
+  const content = completion.choices[0]?.message?.content;
+  if (!content) throw new Error("Empty provider response");
   return content;
 }
 
+// --- PROVIDER CHAIN ---
+
 const providers: Provider[] = [
+  {
+    name: "gemini",
+    envKey: "GEMINI_API_KEY",
+    call: callGemini,
+  },
   {
     name: "groq",
     envKey: "GROQ_API_KEY",
@@ -134,11 +128,6 @@ const providers: Provider[] = [
         prompt,
         signal,
       ),
-  },
-  {
-    name: "gemini",
-    envKey: "GEMINI_API_KEY",
-    call: callGemini,
   },
   {
     name: "nvidia",
@@ -155,6 +144,8 @@ const providers: Provider[] = [
   },
 ];
 
+// --- MAIN ENTRY ---
+
 export async function callLlmWithFallback<S extends z.ZodTypeAny>(
   prompt: string,
   schema: S,
@@ -166,25 +157,25 @@ export async function callLlmWithFallback<S extends z.ZodTypeAny>(
 
   for (const provider of providers) {
     if (!process.env[provider.envKey]) {
-      log(`провайдер ${provider.name} пропущен: нет ${provider.envKey}`);
+      log(`provider ${provider.name} skipped: no ${provider.envKey}`);
       continue;
     }
 
     const startedAt = Date.now();
     try {
       const signal = AbortSignal.timeout(timeoutMs);
-      const raw = await provider.call(system, prompt, signal);
+      const raw = await provider.call(system, prompt, signal, options.jsonSchema);
       const parsed = schema.parse(extractJson(raw));
       const latencyMs = Date.now() - startedAt;
 
       attempts.push({ provider: provider.name, ok: true, latencyMs });
-      log(`ответ получен от ${provider.name}`, { latencyMs });
+      log(`response from ${provider.name}`, { latencyMs });
       return { data: parsed, provider: provider.name, latencyMs, attempts };
     } catch (error) {
       const latencyMs = Date.now() - startedAt;
       const reason = error instanceof Error ? error.message : String(error);
       attempts.push({ provider: provider.name, ok: false, latencyMs, error: reason });
-      log(`провайдер ${provider.name} не ответил`, { latencyMs, error: reason });
+      log(`provider ${provider.name} failed`, { latencyMs, error: reason });
     }
   }
 
