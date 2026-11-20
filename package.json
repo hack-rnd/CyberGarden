@@ -7,7 +7,12 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "contract:emit": "prisma contract emit"
+    "contract:emit": "prisma contract emit",
+    "bot:dev": "tsx src/bot/index.ts",
+    "demo:critical": "tsx scripts/demo/cli.ts critical",
+    "demo:assign": "tsx scripts/demo/cli.ts assign",
+    "demo:resolve": "tsx scripts/demo/cli.ts resolve",
+    "demo:reset": "tsx scripts/demo/cli.ts reset"
   },
   "dependencies": {
     "@google/genai": "^3.6.1",
@@ -17,6 +22,7 @@
     "class-variance-authority": "^0.7.1",
     "cn": "^0.5.2",
     "dotenv": "^18.0.10",
+    "grammy": "^1.46.0",
     "lucide-react": "^1.77.0",
     "next": "16.4.6",
     "openai": "^7.62.0",
