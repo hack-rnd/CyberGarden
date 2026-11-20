@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { IncidentAiData, IncidentPriority, NormalizedIncident } from "@/types/incident";
 import { AllProvidersFailedError, callLlmWithFallback } from "./client";
 import { PRODUCTS, RESOLVER_TEAMS } from "./directory";
+import { buildTeamReason, recommendTeam } from "./ruleTable";
 
 // --- SCHEMA ---
 
@@ -111,46 +112,52 @@ const RISK_BY_PRIORITY: Record<IncidentPriority, number> = {
   low: 15,
 };
 
-const TEAM_BY_KEYWORD: [RegExp, (typeof RESOLVER_TEAMS)[number]][] = [
-  [/биллинг|платеж|оплат|списан/i, "Техподдержка"],
-  [/сеть|канал|пакет|потеря|базовая/i, "Техподдержка"],
-  [/кабинет|банк|тв|платформ|api|ядро/i, "Команда Core"],
-];
-
 export function analyzeIncidentRuleBased(incident: NormalizedIncident): IncidentAiData {
   let riskScore = RISK_BY_PRIORITY[incident.priority] ?? 35;
   const remaining = incident.slaRemainingMs;
+  const riskFactors: string[] = [`приоритет «${incident.rawPriority || incident.priority}»`];
 
   if (remaining !== null) {
-    if (remaining <= 0) riskScore = Math.min(100, riskScore + 20);
-    else if (remaining < 30 * 60_000) riskScore = Math.min(100, riskScore + 15);
-    else if (remaining < 120 * 60_000) riskScore = Math.min(100, riskScore + 5);
+    if (remaining <= 0) {
+      riskScore = Math.min(100, riskScore + 20);
+      riskFactors.push("SLA просрочен");
+    } else if (remaining < 30 * 60_000) {
+      riskScore = Math.min(100, riskScore + 15);
+      riskFactors.push("до SLA меньше 30 минут");
+    } else if (remaining < 120 * 60_000) {
+      riskScore = Math.min(100, riskScore + 5);
+      riskFactors.push("SLA горит (меньше 2 часов)");
+    } else {
+      riskFactors.push("запас по SLA");
+    }
+  } else {
+    riskFactors.push("SLA не задан");
   }
   if (incident.groups.includes("CRITICAL")) {
     riskScore = Math.max(riskScore, 85);
+    riskFactors.push("инцидент в группе CRITICAL");
   }
 
   const riskLevel: IncidentAiData["riskLevel"] =
     riskScore >= 70 ? "high" : riskScore >= 40 ? "medium" : "low";
 
-  const haystack = `${incident.product} ${incident.title} ${incident.description}`;
-  const matched = TEAM_BY_KEYWORD.find(([re]) => re.test(haystack));
-  const recommendedTeam = matched?.[1] ?? "Техподдержка";
-
-  const teamReason = matched
-    ? `Ключевые слова указывают на профиль команды «${recommendedTeam}».`
-    : "Профиль команды не определён по ключевым словам, назначена линия первой поддержки.";
+  const rec = recommendTeam(incident);
+  const teamReason = buildTeamReason(incident, rec);
 
   const slaText =
-    remaining === null ? "SLA не задан" : `остаток SLA ${Math.ceil(remaining / 60_000)} мин`;
+    remaining === null
+      ? "SLA не задан"
+      : remaining <= 0
+        ? `SLA просрочен на ${Math.ceil(-remaining / 60_000)} мин`
+        : `остаток SLA ${Math.ceil(remaining / 60_000)} мин`;
 
   return {
     summary: `Инцидент «${incident.title}» на продукте ${incident.product}. Приоритет: ${incident.priority}.`,
-    recommendedTeam,
+    recommendedTeam: rec.team,
     riskScore,
     riskLevel,
-    riskReason: `Оценка по правилам: приоритет ${incident.priority}, ${slaText}, группы: ${incident.groups.join(", ") || "нет"}.`,
-    handoffMessage: `Команда: ${recommendedTeam}. ${teamReason}\n\nПрошу принять инцидент «${incident.title}» (${incident.product}). ${slaText}. Подробности: ${incident.itsmUrl}`,
+    riskReason: `Локальная оценка без LLM: ${riskFactors.join("; ")}.`,
+    handoffMessage: `Команда: ${rec.team}. ${teamReason}\n\nПрошу принять инцидент «${incident.title}» (${incident.product}). ${slaText}. Подробности: ${incident.itsmUrl}`,
     provider: "rule-based",
     updatedAt: new Date().toISOString(),
   };
