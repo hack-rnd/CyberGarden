@@ -3,13 +3,16 @@ import { Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import type { IncidentGroup } from "@/types/incident";
+
+import { AnalyzeButton, type useDashboardAi } from "./dashboard-ai";
 
 export const incidentGroups = [
   { id: "CRITICAL", title: "Критические", marker: "bg-mts-red" },
   { id: "ASSIGNED_TO_COORDINATORS", title: "На координаторах", marker: "bg-mts-ink" },
   { id: "HIGH_PRIORITY", title: "Высокий приоритет", marker: "bg-mts-amber" },
   { id: "INVESTIGATION", title: "Исследование ситуации", marker: "bg-mts-blue" },
-] as const;
+] as const satisfies readonly { id: IncidentGroup; title: string; marker: string }[];
 
 export type IncidentGroupId = (typeof incidentGroups)[number]["id"];
 
@@ -24,7 +27,8 @@ type DashboardSummaryProps = {
   metrics?: ReadonlyMap<IncidentGroupId, GroupMetrics>;
   selectedGroup: IncidentGroupId | null;
   onSelectGroup: (group: IncidentGroupId | null) => void;
-  recommendations?: readonly string[];
+  ai: ReturnType<typeof useDashboardAi>;
+  onOpenIncident: (id: string, trigger?: HTMLElement) => void;
   hasRiskAssessments: boolean;
   risksOnly: boolean;
   onToggleRisks: () => void;
@@ -34,11 +38,14 @@ export function DashboardSummary({
   metrics,
   selectedGroup,
   onSelectGroup,
-  recommendations,
+  ai,
+  onOpenIncident,
   hasRiskAssessments,
   risksOnly,
   onToggleRisks,
 }: DashboardSummaryProps) {
+  const digest = ai.digest.data;
+
   return (
     <div className="grid grid-cols-12 gap-3 md:gap-4 lg:gap-6">
       <section aria-labelledby="groups-title" className="col-span-12 lg:col-span-8">
@@ -69,7 +76,7 @@ export function DashboardSummary({
                     "transition-[transform,box-shadow,border-color] duration-200 ease-in-out",
                     "hover:border-mts-muted hover:shadow-[0_4px_16px_rgba(29,32,35,0.08)]",
                     "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
-                    "motion-safe:hover:-translate-y-1",
+                    "active:scale-[0.98] motion-safe:hover:-translate-y-1",
                     isSelected && "border-mts-red",
                   )}
                 >
@@ -107,20 +114,44 @@ export function DashboardSummary({
         <div className="rounded-panel border bg-card p-6">
           <div className="flex items-start gap-4">
             <Sparkles aria-hidden="true" className="mt-1 size-5 shrink-0 text-mts-blue" />
-            {recommendations?.length ? (
-              <ul className="list-disc space-y-2 pl-4 text-body-md">
-                {recommendations.slice(0, 3).map((recommendation, index) => (
-                  <li key={index}>{recommendation}</li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-muted-foreground">
-                {recommendations
-                  ? "Пока нет рекомендаций по инцидентам."
-                  : "Рекомендации появятся после загрузки и анализа инцидентов."}
-              </p>
-            )}
+            <p role="status" className="text-body-md">
+              {digest?.headline ?? (ai.digest.isPending
+                ? "Загружаем сводку ИИ…"
+                : ai.digest.isError ? "Не удалось загрузить сводку ИИ." : "Сводка ИИ пока недоступна.")}
+            </p>
           </div>
+          {digest && (
+            <>
+              <dl className="mt-4 grid grid-cols-2 gap-2 text-label-md">
+                <div><dt>Проанализировано</dt><dd>{digest.analyzedCount}</dd></div>
+                <div><dt>Ожидают анализа</dt><dd>{digest.pendingCount}</dd></div>
+                <div><dt>Высокий риск</dt><dd>{digest.highRiskCount}</dd></div>
+                <div><dt>Прогноз срыва SLA</dt><dd>{digest.breachForecastCount}</dd></div>
+                <div><dt>Ожидают передачи</dt><dd>{digest.handoffsPending}</dd></div>
+              </dl>
+              {digest.topConcerns.length > 0 && (
+                <ul className="mt-4 space-y-4">
+                  {digest.topConcerns.map((concern) => (
+                    <li key={concern.incidentId} className="rounded-control border p-4 text-label-md">
+                      <button
+                        type="button"
+                        className="rounded-sm text-left font-semibold underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ring active:scale-[0.98]"
+                        onClick={(event) => onOpenIncident(concern.incidentId, event.currentTarget)}
+                      >
+                        {concern.code} · {concern.product}
+                      </button>
+                      <p className="mt-2">{concern.summary}</p>
+                      <p className="mt-2 text-muted-foreground">
+                        Риск {concern.riskScore}% · {concern.recommendedTeam}
+                        {concern.willBreachSla && " · Прогноз срыва SLA"}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+          <div className="mt-4"><AnalyzeButton controls={ai.analysis} /></div>
           <Button
             type="button"
             variant="outline"

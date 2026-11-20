@@ -84,7 +84,7 @@ export function DashboardAlerts({
     seen.current = new Set([...ids].slice(-100));
 
     const context = audio.current;
-    const event = fresh.find(getAlert);
+    const event = fresh.find(({ type }) => type === "NEW_CRITICAL") ?? fresh.find(getAlert);
     const notification = event && getAlert(event);
 
     if (enabled && context?.state === "running" && notification) {
@@ -102,13 +102,13 @@ export function DashboardAlerts({
         });
         desktopAlert.onclick = () => {
           window.focus();
+          onOpen(event.incidentId);
           desktopAlert.close();
         };
       } catch {
-        // Всплывающее сообщение в дашборде продолжит работать.
       }
     }
-  }, [desktopEnabled, enabled, events]);
+  }, [desktopEnabled, enabled, events, onOpen]);
 
   async function toggleDesktop() {
     if (desktopEnabled) {

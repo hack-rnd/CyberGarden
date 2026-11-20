@@ -4,14 +4,14 @@ import { QueryProvider } from "@/components/providers/QueryProvider";
 import "./globals.css";
 
 const inter = Inter({
-  variable: "--font-sans",
+  variable: "--font-inter",
   subsets: ["latin", "cyrillic"],
 });
 
 const unbounded = Unbounded({
-  variable: "--font-heading",
+  variable: "--font-unbounded",
   subsets: ["latin", "cyrillic"],
-  weight: ["600", "700"],
+  weight: ["500", "600", "700"],
 });
 
 export const metadata: Metadata = {

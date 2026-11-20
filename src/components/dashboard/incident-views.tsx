@@ -1,38 +1,18 @@
 import { ArrowUpRight } from "lucide-react";
-import { useMemo, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
+import { useMemo, useSyncExternalStore, type MouseEvent } from "react";
 
 import { cn } from "@/lib/utils";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { isIncidentActive, type Incident, type IncidentAiAnalysis } from "./dashboard-model";
+import { deadlineFor, isIncidentActive, type DashboardIncident } from "./dashboard-model";
 
 import { incidentGroups, type IncidentGroupId } from "./dashboard-summary";
 import { IncidentDetails } from "./incident-details";
-
-export type DashboardIncident = Pick<
-  Incident, "id" | "service" | "description" | "assignedTeam" | "status"
-> & Partial<Pick<Incident, "severity" | "createdAt" | "title" | "updatedAt" | "region" | "affectedUsers" | "metrics">> & {
-  analysis?: Partial<Pick<IncidentAiAnalysis, "summary" | "targetTeam" | "rootCause" | "actionPlan">> & {
-    recommendedTeam?: string;
-    riskScore?: number;
-    riskReason?: string;
-    slaForecast?: string;
-    handoffText?: string;
-  };
-  groups: readonly IncidentGroupId[];
-  slaStatus?: "ok" | "warning" | "critical" | "breached" | "completed";
-  slaDeadline?: string;
-  criticalResolvedAt?: string;
-  slaForecast?: string;
-  itsmUrl?: string;
-  hasEscalationRisk?: boolean;
-  riskScore?: number;
-};
+import type { AiAnalysisControls } from "./dashboard-ai";
 
 const statusLabels: Record<DashboardIncident["status"], string> = {
-  open: "Открыт",
   new: "Новый",
   in_progress: "В работе",
   waiting: "Ожидает",
@@ -66,15 +46,8 @@ export function useIncidentClock(enabled: boolean) {
   );
 }
 
-function deadlineFor(incident: DashboardIncident) {
-  if (!incident.slaDeadline) return Infinity;
-
-  const deadline = Date.parse(incident.slaDeadline);
-  return Number.isFinite(deadline) ? deadline : Infinity;
-}
-
 function isActiveCritical(incident: DashboardIncident) {
-  return isIncidentActive(incident) && (incident.groups.includes("CRITICAL") || incident.severity === "critical");
+  return isIncidentActive(incident) && (incident.groups.includes("CRITICAL") || incident.priority === "critical");
 }
 
 function formatDuration(seconds: number) {
@@ -86,19 +59,19 @@ function formatDuration(seconds: number) {
 function SlaTimer({ incident, now, resolvedAt }: {
   incident: DashboardIncident;
   now: number | null;
-  resolvedAt?: number;
+  resolvedAt?: number | null;
 }) {
   const deadline = deadlineFor(incident);
 
   if (!isIncidentActive(incident)) {
-    if (resolvedAt === undefined || !Number.isFinite(deadline)) {
+    if (resolvedAt == null || !Number.isFinite(deadline)) {
       return <span className="text-muted-foreground">Завершён</span>;
     }
     const remaining = Math.ceil((deadline - resolvedAt) / 1000);
     return (
       <span className="text-muted-foreground">
         <span className="sr-only">SLA на момент решения: </span>
-        <s className="tabular-nums">{resolvedAt > deadline ? "Просрочен" : formatDuration(remaining)}</s>
+        <s className="tabular-nums">{resolvedAt >= deadline ? "Просрочен" : formatDuration(remaining)}</s>
       </span>
     );
   }
@@ -121,7 +94,7 @@ function OpenItsm({ incident, label = "В ITSM" }: { incident: DashboardIncident
     const url = incident.itsmUrl ? new URL(incident.itsmUrl) : undefined;
     if (url?.protocol === "https:" || url?.protocol === "http:") href = url.href;
   } catch {
-    // An incomplete link is displayed as unavailable.
+    href = undefined;
   }
 
   if (!href) return <span className="text-label-sm text-muted-foreground">Нет ссылки в ITSM</span>;
@@ -154,14 +127,14 @@ function GroupTags({ incident, currentGroup }: { incident: DashboardIncident; cu
   );
 }
 
-function IncidentDate({ createdAt }: { createdAt?: string }) {
+function IncidentDate({ createdAt }: { createdAt?: string | null }) {
   const timestamp = createdAt ? Date.parse(createdAt) : NaN;
   if (!Number.isFinite(timestamp)) return <span className="text-muted-foreground">—</span>;
 
   return <time dateTime={new Date(timestamp).toISOString()} title="Московское время">{dateFormat.format(timestamp)}</time>;
 }
 
-function IncidentStatus({ incident, resolvedAt }: { incident: DashboardIncident; resolvedAt?: number }) {
+function IncidentStatus({ incident, resolvedAt }: { incident: DashboardIncident; resolvedAt?: number | null }) {
   if (resolvedAt !== undefined) {
     return (
       <Badge variant="outline" className="h-auto rounded-pill border-mts-emerald px-2 py-1 text-label-sm">
@@ -207,26 +180,26 @@ function IncidentCard({
   incident: DashboardIncident;
   currentGroup: IncidentGroupId;
   now: number | null;
-  resolvedAt?: number;
+  resolvedAt?: number | null;
   onArchive: (id: string) => void;
   onOpenDetails: OpenDetails;
 }) {
   return (
     <article className={cn(
-      "space-y-4 rounded-panel border bg-card p-4",
+      "space-y-4 rounded-panel border bg-card p-4 transition duration-200 hover:shadow-[0_4px_16px_rgba(29,32,35,0.08)] motion-safe:hover:-translate-y-1 motion-reduce:transition-none",
       isActiveCritical(incident) && "border-l-4 border-l-mts-red",
       resolvedAt !== undefined && "border-l-4 border-l-mts-emerald",
     )}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="text-label-sm text-muted-foreground">{incident.id}</p>
-          <h4 className="font-sans text-body-md font-semibold wrap-break-word">{incident.service}</h4>
+          <h4 className="font-sans text-body-md font-semibold wrap-break-word">{incident.product}</h4>
         </div>
         <IncidentStatus incident={incident} resolvedAt={resolvedAt} />
       </div>
       <GroupTags incident={incident} currentGroup={currentGroup} />
       <dl className="grid grid-cols-2 gap-4 text-label-md">
-        <div><dt className="text-muted-foreground">Исполнитель</dt><dd className="wrap-break-word">{incident.assignedTeam || "Не назначен"}</dd></div>
+        <div><dt className="text-muted-foreground">Исполнитель</dt><dd className="wrap-break-word">{incident.assigneeTeam || "Не назначен"}</dd></div>
         <div><dt className="text-muted-foreground">Создан</dt><dd><IncidentDate createdAt={incident.createdAt} /></dd></div>
       </dl>
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -241,38 +214,35 @@ function IncidentCard({
 
 export function IncidentViews({
   incidents, view, selectedGroup, now, criticalResolutions, onArchive,
+  selected, onOpenDetails, onClose, restoreFocus, aiControls,
 }: {
   incidents: readonly DashboardIncident[];
   view: "groups" | "table";
   selectedGroup: IncidentGroupId | null;
   now: number | null;
-  criticalResolutions: ReadonlyMap<string, number>;
+  criticalResolutions: ReadonlyMap<string, number | null>;
   onArchive: (id: string) => void;
+  selected?: DashboardIncident;
+  onOpenDetails: OpenDetails;
+  onClose: () => void;
+  restoreFocus: () => void;
+  aiControls: AiAnalysisControls;
 }) {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const detailsTrigger = useRef<HTMLButtonElement | null>(null);
-  const selected = incidents.find((incident) => incident.id === selectedId);
   const resolvedAt = selected ? criticalResolutions.get(selected.id) : undefined;
-  if (selectedId !== null && !selected) setSelectedId(null);
-
-  function openDetails(id: string, event: MouseEvent<HTMLButtonElement>) {
-    detailsTrigger.current = event.currentTarget;
-    setSelectedId(id);
-  }
 
   const details = (
     <IncidentDetails
       incident={selected}
       status={selected && <IncidentStatus incident={selected} resolvedAt={resolvedAt} />}
-      priority={selected?.severity && priorityLabels[selected.severity]}
+      priority={selected?.priority && priorityLabels[selected.priority]}
       created={<IncidentDate createdAt={selected?.createdAt} />}
-      updated={<IncidentDate createdAt={selected?.updatedAt} />}
       deadline={<IncidentDate createdAt={selected?.slaDeadline} />}
       sla={selected && <SlaTimer incident={selected} now={now} resolvedAt={resolvedAt} />}
       groups={selected && <GroupTags incident={selected} />}
       itsm={selected && <OpenItsm incident={selected} label="Открыть в ITSM" />}
-      onClose={() => setSelectedId(null)}
-      restoreFocus={() => detailsTrigger.current?.focus()}
+      onClose={onClose}
+      restoreFocus={restoreFocus}
+      aiControls={aiControls}
     />
   );
 
@@ -280,11 +250,12 @@ export function IncidentViews({
     const firstResolution = criticalResolutions.get(first.id);
     const secondResolution = criticalResolutions.get(second.id);
     if (firstResolution !== undefined || secondResolution !== undefined) {
-      return (secondResolution ?? -Infinity) - (firstResolution ?? -Infinity);
+      return (secondResolution === undefined ? -1 : secondResolution ?? 0)
+        - (firstResolution === undefined ? -1 : firstResolution ?? 0);
     }
     const firstDeadline = isIncidentActive(first) ? deadlineFor(first) : Infinity;
     const secondDeadline = isIncidentActive(second) ? deadlineFor(second) : Infinity;
-    return firstDeadline - secondDeadline;
+    return firstDeadline === secondDeadline ? 0 : firstDeadline - secondDeadline;
   }), [incidents, criticalResolutions]);
 
   if (view === "table") {
@@ -317,24 +288,21 @@ export function IncidentViews({
                       isActiveCritical(incident) && "border-l-4 border-l-mts-red",
                       resolvedAt !== undefined && "border-l-4 border-l-mts-emerald",
                     )}>{incident.id}</th>
-                    <TableCell className="p-4 font-medium">{incident.service}</TableCell>
+                    <TableCell className="p-4 font-medium">{incident.product}</TableCell>
                     <TableCell className="min-w-44 p-4"><GroupTags incident={incident} /></TableCell>
-                    <TableCell className="p-4">{incident.severity ? priorityLabels[incident.severity] : "—"}</TableCell>
+                    <TableCell className="p-4">{incident.priority ? priorityLabels[incident.priority] : "—"}</TableCell>
                     <TableCell className="p-4"><IncidentStatus incident={incident} resolvedAt={resolvedAt} /></TableCell>
-                    <TableCell className="p-4">{incident.assignedTeam || "Не назначен"}</TableCell>
+                    <TableCell className="p-4">{incident.assigneeTeam || "Не назначен"}</TableCell>
                     <TableCell className="p-4"><IncidentDate createdAt={incident.createdAt} /></TableCell>
                     <TableCell className="p-4">
                       <SlaTimer incident={incident} now={now} resolvedAt={resolvedAt} />
-                      {incident.slaForecast && <p className="mt-1 text-label-sm text-muted-foreground">{incident.slaForecast}</p>}
                     </TableCell>
                     <TableCell className="p-4">
-                      {typeof incident.riskScore === "number"
-                        ? `${incident.riskScore}%`
-                        : incident.hasEscalationRisk === true ? "Есть риск" : incident.hasEscalationRisk === false ? "Риск не выявлен" : "—"}
+                      {incident.ai ? `${incident.ai.riskScore}%` : "—"}
                     </TableCell>
                     <TableCell className="p-4">
                       <div className="flex flex-wrap items-center gap-2">
-                        <DetailsButton id={incident.id} onOpenDetails={openDetails} />
+                        <DetailsButton id={incident.id} onOpenDetails={onOpenDetails} />
                         <OpenItsm incident={incident} />
                         {resolvedAt !== undefined && <ArchiveButton id={incident.id} onArchive={onArchive} />}
                       </div>
@@ -372,7 +340,7 @@ export function IncidentViews({
                         now={now}
                         resolvedAt={criticalResolutions.get(incident.id)}
                         onArchive={onArchive}
-                        onOpenDetails={openDetails}
+                        onOpenDetails={onOpenDetails}
                       />
                     </li>
                   ))}

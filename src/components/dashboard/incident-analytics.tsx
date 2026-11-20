@@ -12,8 +12,7 @@ import {
   YAxis,
 } from "recharts";
 
-import { isIncidentActive, type IncidentTimelineEvent } from "./dashboard-model";
-import type { DashboardIncident } from "./incident-views";
+import { currentSlaStatus, deadlineFor, isIncidentActive, type DashboardIncident, type IncidentTimelineEvent } from "./dashboard-model";
 
 const minute = 60_000;
 const hour = 60 * minute;
@@ -72,14 +71,10 @@ function summarizeActivity({ incidents, events }: AnalyticsProps, end: number) {
   let overdueSla = 0;
 
   for (const incident of incidents ?? []) {
-    if (!isIncidentActive(incident)) continue;
+    if (!isIncidentActive(incident) || !Number.isFinite(deadlineFor(incident))) continue;
 
-    const deadline = Date.parse(incident.slaDeadline ?? "");
-    const hasDeadline = Number.isFinite(deadline);
-
-    if (hasDeadline || incident.slaStatus) trackedSla++;
-
-    if ((hasDeadline && deadline <= end) || incident.slaStatus === "breached") {
+    trackedSla++;
+    if (currentSlaStatus(incident, end) === "breached") {
       overdueSla++;
     }
   }
