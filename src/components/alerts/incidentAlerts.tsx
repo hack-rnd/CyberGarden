@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react"
 import type { DiffEvent } from "@/types/incident"
 import { alertKinds, isAlertKind, seenAlerts } from "@/bot/alertKinds"
 import type { AlertKind } from "@/bot/alertKinds"
@@ -9,6 +9,31 @@ import styles from "./incidentAlerts.module.css"
 type ToastEvent = DiffEvent & { type: AlertKind }
 
 const mutedKey = "mts.incident-alerts.muted"
+const preferenceChanged = "mts-incident-alert-preference"
+let fallbackMuted = true
+
+function readMuted() {
+  try {
+    return (localStorage.getItem(mutedKey) ?? String(fallbackMuted)) !== "false"
+  } catch {
+    return fallbackMuted
+  }
+}
+
+function readNotificationPermission(): NotificationPermission | "unavailable" {
+  return typeof Notification === "undefined" ? "unavailable" : Notification.permission
+}
+
+function subscribePreferences(listener: () => void) {
+  window.addEventListener(preferenceChanged, listener)
+  window.addEventListener("storage", listener)
+  window.addEventListener("focus", listener)
+  return () => {
+    window.removeEventListener(preferenceChanged, listener)
+    window.removeEventListener("storage", listener)
+    window.removeEventListener("focus", listener)
+  }
+}
 
 const tones: Record<AlertKind, readonly number[]> = {
   NEW_CRITICAL: [480, 650],
@@ -36,9 +61,8 @@ function play(context: AudioContext, type: AlertKind) {
 export function useIncidentAlerts() {
   const alreadySeen = useRef(seenAlerts())
   const audio = useRef<AudioContext | null>(null)
-  const mutedRef = useRef(true)
-  const [muted, setMuted] = useState(true)
-  const [notifications, setNotifications] = useState<NotificationPermission | "unavailable">("unavailable")
+  const muted = useSyncExternalStore(subscribePreferences, readMuted, () => true)
+  const notifications = useSyncExternalStore(subscribePreferences, readNotificationPermission, () => "unavailable")
   const [toasts, setToasts] = useState<ToastEvent[]>([])
 
   const unlockAudio = useCallback(() => {
@@ -47,18 +71,9 @@ export function useIncidentAlerts() {
     if (audio.current.state === "suspended") void audio.current.resume().catch(() => undefined)
   }, [])
 
-  useEffect(() => {
-    if (typeof Notification !== "undefined") setNotifications(Notification.permission)
-    try {
-      mutedRef.current = localStorage.getItem(mutedKey) !== "false"
-      setMuted(mutedRef.current)
-    } catch {
-      // --- STORAGE UNAVAILABLE ---
-    }
-    return () => {
-      if (audio.current) void audio.current.close().catch(() => undefined)
-      audio.current = null
-    }
+  useEffect(() => () => {
+    if (audio.current) void audio.current.close().catch(() => undefined)
+    audio.current = null
   }, [])
 
   useEffect(() => {
@@ -72,24 +87,25 @@ export function useIncidentAlerts() {
   }, [muted, unlockAudio])
 
   const toggleMute = useCallback(() => {
-    const next = !mutedRef.current
-    mutedRef.current = next
-    setMuted(next)
+    const next = !readMuted()
+    fallbackMuted = next
     if (!next) unlockAudio()
     try {
       localStorage.setItem(mutedKey, String(next))
     } catch {
       // --- STORAGE UNAVAILABLE ---
     }
+    window.dispatchEvent(new Event(preferenceChanged))
   }, [unlockAudio])
 
   const enableNotifications = useCallback(async () => {
     if (typeof Notification === "undefined") return
     try {
-      setNotifications(await Notification.requestPermission())
+      await Notification.requestPermission()
     } catch {
-      setNotifications("unavailable")
+      // --- NOTIFICATION UNAVAILABLE ---
     }
+    window.dispatchEvent(new Event(preferenceChanged))
   }, [])
 
   const dismiss = useCallback((id: DiffEvent["id"]) => {
@@ -97,12 +113,14 @@ export function useIncidentAlerts() {
   }, [])
 
   const onEvents = useCallback((events: DiffEvent[]) => {
-    const fresh = events.filter((event): event is ToastEvent =>
-      isAlertKind(event.type) && !alreadySeen.current(event.id),
-    )
+    const fresh = events.filter((event): event is ToastEvent => {
+      if (!isAlertKind(event.type) || alreadySeen.current.has(event.id)) return false
+      alreadySeen.current.add(event.id)
+      return true
+    })
     if (!fresh.length) return
     setToasts((current) => [...current, ...fresh].slice(-4))
-    if (!mutedRef.current && audio.current?.state === "running") {
+    if (!readMuted() && audio.current?.state === "running") {
       const mostUrgent = fresh.find((event) => event.type === "NEW_CRITICAL") ?? fresh[0]
       play(audio.current, mostUrgent.type)
     }

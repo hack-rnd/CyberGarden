@@ -16,14 +16,14 @@ export function isAlertKind(type: string): type is AlertKind {
 export function seenAlerts(capacity = 1024) {
   const ids = new Set<string>()
 
-  return (id: DiffEvent["id"]): boolean => {
-    const key = String(id)
-    if (ids.has(key)) return true
-    ids.add(key)
-    if (ids.size > capacity) {
-      const oldest = ids.values().next()
-      if (!oldest.done) ids.delete(oldest.value)
-    }
-    return false
+  return {
+    has: (id: DiffEvent["id"]) => ids.has(String(id)),
+    add(id: DiffEvent["id"]) {
+      ids.add(String(id))
+      if (ids.size > capacity) {
+        const oldest = ids.values().next()
+        if (!oldest.done) ids.delete(oldest.value)
+      }
+    },
   }
 }
