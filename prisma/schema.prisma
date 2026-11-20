@@ -1,25 +1,38 @@
-// use prisma-8
+// --- CONFIG ---
 
-model AiCache {
-  id           Int      @id @default(autoincrement())
-  incidentHash String   @unique
-  incidentId   String
-  summary      String
-  rootCause    String?
-  actionPlan   String
-  targetTeam   String?
-  provider     String
-  createdAt    DateTime @default(now())
+generator client {
+  provider = "prisma-client-js"
 }
 
-model IncidentEvent {
-  id           Int      @id @default(autoincrement())
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// --- MODELS ---
+
+model AiAnalysisCache {
+  id              String   @id @default(cuid())
+  incidentId      String   @unique
+  contentHash     String
+  summary         String
+  recommendedTeam String
+  riskScore       Int
+  riskLevel       String
+  riskReason      String
+  handoffMessage  String
+  provider        String
+  updatedAt       DateTime @updatedAt
+}
+
+model ChangeEvent {
+  id           String   @id @default(cuid())
   incidentId   String
-  eventType    String
-  title        String
-  details      String?
-  priority     String?
-  assignedTeam String?
-  isNotified   Int      @default(0)
+  incidentCode String
+  product      String
+  type         String
+  message      String
   createdAt    DateTime @default(now())
+
+  @@index([createdAt])
 }
