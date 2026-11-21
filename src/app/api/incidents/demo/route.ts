@@ -77,7 +77,7 @@ export async function POST(request: NextRequest) {
     input.assigneeTeam?.trim() ||
     (groups.includes("ASSIGNED_TO_COORDINATORS")
       ? COORDINATOR_TEAM_NAME
-      : "КЦ ИТ OPS Аварии ДС");
+      : null);
 
   const now = new Date();
   const slaMinutes =

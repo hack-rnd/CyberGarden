@@ -14,7 +14,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 
-import { IncidentAssignment, IncidentHistory } from "./incident-actions";
+import { getAiSuggestedAssignee, IncidentAssignment, IncidentHistory } from "./incident-actions";
 import type { DashboardIncident } from "./dashboard-model";
 import { AnalyzeButton, type AiAnalysisControls } from "./dashboard-ai";
 
@@ -267,6 +267,7 @@ function SimilarIncidentSearch({
 // --- DETAILS SHEET ---
 
 export function IncidentDetails(props: {
+  autoOpenAssign?: boolean;
   incident?: DashboardIncident;
   serverBacked?: boolean;
   status?: ReactNode;
@@ -374,7 +375,21 @@ export function IncidentDetails(props: {
               <dl className="grid grid-cols-2 gap-4">
                 <DetailField label="Продукт">{incident.product}</DetailField>
                 <DetailField label="Исполнитель">
-                  {incident.assigneeTeam || "Не назначен"}
+                  {incident.assigneeEmployee ? (
+                    <span>
+                      <strong>{incident.assigneeEmployee}</strong>
+                      {incident.assigneeTeam &&
+                        incident.assigneeTeam !== "Не назначена" && (
+                          <span className="block text-label-sm text-muted-foreground">
+                            {incident.assigneeTeam}
+                          </span>
+                        )}
+                    </span>
+                  ) : (
+                    <span className="font-medium text-[#B8380E]">
+                      Исполнитель не указан
+                    </span>
+                  )}
                 </DetailField>
                 <DetailField label="Статус">{status}</DetailField>
                 <DetailField label="Приоритет">{priority ?? "—"}</DetailField>
@@ -407,7 +422,13 @@ export function IncidentDetails(props: {
                 </div>
               )}
               {itsm}
-              {props.serverBacked && <IncidentAssignment incident={incident} />}
+              {props.serverBacked && (
+                <IncidentAssignment
+                  key={`${incident.id}-${props.autoOpenAssign ? "assign" : "view"}`}
+                  incident={incident}
+                  defaultOpen={Boolean(props.autoOpenAssign)}
+                />
+              )}
             </section>
 
             <section
@@ -427,12 +448,16 @@ export function IncidentDetails(props: {
                   ИИ-анализ пока недоступен.
                 </p>
               )}
-              {analysis?.recommendedTeam && (
-                <p>
-                  <strong>Команда для передачи:</strong>{" "}
-                  {analysis.recommendedTeam}
-                </p>
-              )}
+              {(() => {
+                const suggestion = getAiSuggestedAssignee(incident);
+                if (!suggestion) return null;
+                return (
+                  <p>
+                    <strong>Рекомендуемый ответственный (совет ИИ):</strong>{" "}
+                    {suggestion.employee} — решение принимает координатор.
+                  </p>
+                );
+              })()}
               {riskScore !== undefined && (
                 <div>
                   <label className="block font-medium" htmlFor="incident-risk-meter">

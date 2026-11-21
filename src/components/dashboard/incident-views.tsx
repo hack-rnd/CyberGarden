@@ -1,7 +1,19 @@
 "use client";
 
-import { ArrowUpRight, ChevronLeft, ChevronRight, Pencil } from "lucide-react";
-import { useMemo, useRef, useSyncExternalStore, type MouseEvent } from "react";
+import {
+  ArrowUpRight,
+  ChevronLeft,
+  ChevronRight,
+  Pencil,
+  UserPlus,
+} from "lucide-react";
+import {
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type MouseEvent,
+} from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -55,6 +67,14 @@ export const priorityLabels = {
   low: "Низкий",
 };
 
+const UNASSIGNED_TEAM_LABELS = new Set([
+  "",
+  "не назначена",
+  "не назначен",
+  "не указан",
+  "не указана",
+]);
+
 const dateFormat = new Intl.DateTimeFormat("ru-RU", {
   day: "numeric",
   month: "short",
@@ -99,6 +119,19 @@ function isActiveCritical(incident: DashboardIncident) {
   );
 }
 
+function hasRealTeam(team: string | null | undefined): boolean {
+  if (!team) return false;
+  return !UNASSIGNED_TEAM_LABELS.has(team.trim().toLowerCase());
+}
+
+function isFreshUnassigned(incident: DashboardIncident): boolean {
+  return (
+    isIncidentActive(incident) &&
+    incident.id.startsWith("INC000099") &&
+    !incident.assigneeEmployee?.trim()
+  );
+}
+
 export function formatDuration(seconds: number) {
   return [
     Math.floor(seconds / 3600),
@@ -117,6 +150,16 @@ export function sortIncidentsForTable(
     const firstCrit = isActiveCritical(first) ? 0 : 1;
     const secondCrit = isActiveCritical(second) ? 0 : 1;
     if (firstCrit !== secondCrit) return firstCrit - secondCrit;
+
+    const firstFresh = isFreshUnassigned(first) ? 0 : 1;
+    const secondFresh = isFreshUnassigned(second) ? 0 : 1;
+    if (firstFresh !== secondFresh) return firstFresh - secondFresh;
+
+    if (firstCrit === 0 || firstFresh === 0) {
+      const firstCreated = Date.parse(first.createdAt ?? "") || 0;
+      const secondCreated = Date.parse(second.createdAt ?? "") || 0;
+      if (firstCreated !== secondCreated) return secondCreated - firstCreated;
+    }
 
     const firstResolution = criticalResolutions.get(first.id);
     const secondResolution = criticalResolutions.get(second.id);
@@ -503,6 +546,46 @@ function EditButton({
   );
 }
 
+function AssigneeCell({
+  incident,
+  onAssign,
+}: {
+  incident: DashboardIncident;
+  onAssign: OpenDetails;
+}) {
+  const employee = incident.assigneeEmployee?.trim() || "";
+  const team = hasRealTeam(incident.assigneeTeam)
+    ? incident.assigneeTeam.trim()
+    : "";
+
+  return (
+    <div className="space-y-1.5">
+      {employee ? (
+        <div>
+          <p className="font-medium text-foreground">{employee}</p>
+          {team && <p className="text-label-sm text-muted-foreground">{team}</p>}
+        </div>
+      ) : (
+        <>
+          <p className="font-semibold text-[#B8380E]">Исполнитель не указан</p>
+          {team && <p className="text-label-sm text-muted-foreground">{team}</p>}
+          {incident.status !== "closed" && (
+            <Button
+              type="button"
+              variant="outline"
+              className="h-8 rounded-control border-mts-red/40 bg-card px-2.5 text-label-sm font-medium text-mts-crimson hover:bg-mts-red hover:text-white"
+              onClick={(event) => onAssign(incident.id, event)}
+            >
+              <UserPlus className="size-3.5" aria-hidden="true" />
+              Указать исполнителя
+            </Button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // --- CARD VIEW ---
 
 function IncidentCard({
@@ -512,6 +595,7 @@ function IncidentCard({
   resolvedAt,
   onArchive,
   onOpenDetails,
+  onAssign,
   onEditProcess,
 }: {
   incident: DashboardIncident;
@@ -520,6 +604,7 @@ function IncidentCard({
   resolvedAt?: number | null;
   onArchive: (id: string) => void;
   onOpenDetails: OpenDetails;
+  onAssign: OpenDetails;
   onEditProcess?: OpenDetails;
 }) {
   const criticalActive = isActiveCritical(incident);
@@ -556,13 +641,13 @@ function IncidentCard({
       <dl className="grid grid-cols-2 gap-4 text-label-md">
         <div>
           <dt className="text-muted-foreground">Исполнитель</dt>
-          <dd className="wrap-break-word">
-            {incident.assigneeTeam || "Не назначен"}
+          <dd className="mt-1 wrap-break-word">
+            <AssigneeCell incident={incident} onAssign={onAssign} />
           </dd>
         </div>
         <div>
           <dt className="text-muted-foreground">Создан</dt>
-          <dd>
+          <dd className="mt-1">
             <IncidentDate createdAt={incident.createdAt} />
           </dd>
         </div>
@@ -629,13 +714,25 @@ export function IncidentViews({
   onPageChange: (nextPage: number) => void;
 }) {
   const tableWrapperRef = useRef<HTMLDivElement | null>(null);
+  const [autoAssignId, setAutoAssignId] = useState<string | null>(null);
   const resolvedAt = selected ? criticalResolutions.get(selected.id) : undefined;
   void isManualProcess;
+
+  const openDetailsOnly: OpenDetails = (id, event) => {
+    setAutoAssignId(null);
+    onOpenDetails(id, event);
+  };
+
+  const openDetailsForAssign: OpenDetails = (id, event) => {
+    setAutoAssignId(id);
+    onOpenDetails(id, event);
+  };
 
   const details = (
     <IncidentDetails
       incident={selected}
       serverBacked={selectedIsServerBacked}
+      autoOpenAssign={Boolean(selected && autoAssignId === selected.id)}
       status={
         selected && (
           <IncidentStatus incident={selected} resolvedAt={resolvedAt} />
@@ -656,7 +753,10 @@ export function IncidentViews({
       }
       groups={selected && <GroupTags incident={selected} />}
       itsm={selected && <OpenItsm incident={selected} label="Открыть в ITSM" />}
-      onClose={onClose}
+      onClose={() => {
+        setAutoAssignId(null);
+        onClose();
+      }}
       restoreFocus={restoreFocus}
       aiControls={aiControls}
     />
@@ -745,14 +845,14 @@ export function IncidentViews({
                 {[
                   "ID",
                   "Продукт",
-                  "Группы",
-                  "Приоритет",
-                  "Статус",
-                  "Исполнитель",
-                  "Создан",
-                  "До SLA",
-                  "ИИ-риск",
                   "Действия",
+                  "Исполнитель",
+                  "Статус",
+                  "До SLA",
+                  "Приоритет",
+                  "Группы",
+                  "Создан",
+                  "ИИ-риск",
                 ].map((label) => (
                   <TableHead key={label} scope="col" className="px-3 py-3">
                     {label}
@@ -802,45 +902,11 @@ export function IncidentViews({
                       <div>{incident.product}</div>
                       <ContextBadges incident={incident} compact />
                     </TableCell>
-                    <TableCell className="min-w-40 px-3 py-3">
-                      <GroupTags incident={incident} />
-                    </TableCell>
-                    <TableCell
-                      className={cn(
-                        "px-3 py-3 whitespace-nowrap",
-                        criticalActive && "font-semibold text-mts-crimson",
-                      )}
-                    >
-                      {incident.priority ? priorityLabels[incident.priority] : "—"}
-                    </TableCell>
-                    <TableCell className="px-3 py-3">
-                      <IncidentStatus
-                        incident={incident}
-                        resolvedAt={rowResolvedAt}
-                      />
-                    </TableCell>
-                    <TableCell className="max-w-[200px] px-3 py-3 whitespace-normal">
-                      {incident.assigneeTeam || "Не назначен"}
-                    </TableCell>
-                    <TableCell className="px-3 py-3">
-                      <IncidentDate createdAt={incident.createdAt} />
-                    </TableCell>
-                    <TableCell className="px-3 py-3">
-                      <SlaTimer
-                        incident={incident}
-                        now={now}
-                        resolvedAt={rowResolvedAt}
-                        showBar
-                      />
-                    </TableCell>
-                    <TableCell className="px-3 py-3 whitespace-nowrap">
-                      {incident.ai ? `${incident.ai.riskScore}%` : "—"}
-                    </TableCell>
                     <TableCell className="px-3 py-3">
                       <div className="flex flex-col items-start gap-1.5">
                         <DetailsButton
                           id={incident.id}
-                          onOpenDetails={onOpenDetails}
+                          onOpenDetails={openDetailsOnly}
                         />
                         {onEditProcess && (
                           <EditButton
@@ -853,6 +919,43 @@ export function IncidentViews({
                           onArchive={onArchive}
                         />
                       </div>
+                    </TableCell>
+                    <TableCell className="min-w-[210px] max-w-[240px] px-3 py-3 whitespace-normal">
+                      <AssigneeCell
+                        incident={incident}
+                        onAssign={openDetailsForAssign}
+                      />
+                    </TableCell>
+                    <TableCell className="px-3 py-3">
+                      <IncidentStatus
+                        incident={incident}
+                        resolvedAt={rowResolvedAt}
+                      />
+                    </TableCell>
+                    <TableCell className="px-3 py-3">
+                      <SlaTimer
+                        incident={incident}
+                        now={now}
+                        resolvedAt={rowResolvedAt}
+                        showBar
+                      />
+                    </TableCell>
+                    <TableCell
+                      className={cn(
+                        "px-3 py-3 whitespace-nowrap",
+                        criticalActive && "font-semibold text-mts-crimson",
+                      )}
+                    >
+                      {incident.priority ? priorityLabels[incident.priority] : "—"}
+                    </TableCell>
+                    <TableCell className="min-w-40 px-3 py-3">
+                      <GroupTags incident={incident} />
+                    </TableCell>
+                    <TableCell className="px-3 py-3">
+                      <IncidentDate createdAt={incident.createdAt} />
+                    </TableCell>
+                    <TableCell className="px-3 py-3 whitespace-nowrap">
+                      {incident.ai ? `${incident.ai.riskScore}%` : "—"}
                     </TableCell>
                   </TableRow>
                 );
@@ -959,7 +1062,8 @@ export function IncidentViews({
                         now={now}
                         resolvedAt={criticalResolutions.get(incident.id)}
                         onArchive={onArchive}
-                        onOpenDetails={onOpenDetails}
+                        onOpenDetails={openDetailsOnly}
+                        onAssign={openDetailsForAssign}
                         onEditProcess={onEditProcess}
                       />
                     </li>

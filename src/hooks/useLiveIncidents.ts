@@ -43,7 +43,7 @@ export function useLiveIncidents(options?: UseLiveIncidentsOptions) {
   const query = useQuery<IncidentsApiResponse>({
     queryKey: ["incidents"],
     queryFn: fetchIncidents,
-    refetchInterval: connectionState === "connected" ? false : 2_000,
+    refetchInterval: connectionState === "connected" ? 4_000 : 2_000,
   });
 
   useEffect(() => {
