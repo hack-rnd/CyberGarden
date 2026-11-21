@@ -15,6 +15,28 @@ function field(value: unknown): string {
   return typeof value === "string" ? value.trim() : ""
 }
 
+function formatSla(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return ""
+  return (value < 0 ? "просрочен на " : "осталось ") + Math.ceil(Math.abs(value) / 60_000) + " мин"
+}
+
+export function formatCriticalAlert(value: unknown, event?: DiffEvent) {
+  const incident = record(value)
+  const id = field(incident?.id) || event?.incidentId || "Не указан"
+  const product = field(incident?.product) || event?.product || "Не указан"
+  const status = field(incident?.statusLabel) || field(incident?.rawStatus) || "Не указан"
+  const sla = field(incident?.slaLabel) || formatSla(incident?.slaRemainingMs) || "Не указан"
+  const assignee = field(incident?.assigneeEmployee) || field(incident?.assigneeTeam) || "Не назначен"
+  return [
+    "🚨 Новый критический инцидент",
+    `Инцидент — ${id.slice(0, 100)}`,
+    `Продукт — ${product.slice(0, 200)}`,
+    `Статус — ${status.slice(0, 160)}`,
+    `SLA — ${sla.slice(0, 100)}`,
+    `Исполнитель — ${assignee.slice(0, 200)}`,
+  ].join("\n")
+}
+
 function httpsUrl(value: string): string | undefined {
   try {
     const url = new URL(value)
@@ -26,12 +48,13 @@ function httpsUrl(value: string): string | undefined {
 
 export function formatAlert(event: DiffEvent, snapshot: unknown[], itsmTemplate?: string) {
   const incident = record(matchIncident(event, snapshot))
+  if (event.type === "NEW_CRITICAL") return { text: formatCriticalAlert(incident, event), url: undefined }
+  if (event.type === "INCIDENT_AUTO_CLOSED") {
+    return { text: `✅ Инцидент ${event.incidentCode} автоматически закрыт.`, url: undefined }
+  }
   const ai = record(incident?.ai)
   const status = field(incident?.rawStatus) || field(incident?.status)
-  const remaining = incident?.slaRemainingMs
-  const sla = typeof remaining === "number" && Number.isFinite(remaining)
-    ? (remaining < 0 ? "просрочен на " : "осталось ") + Math.ceil(Math.abs(remaining) / 60_000) + " мин"
-    : ""
+  const sla = formatSla(incident?.slaRemainingMs)
   const summary = field(ai?.summary)
   const team = field(ai?.recommendedTeam)
   const url = httpsUrl(field(incident?.itsmUrl)) ??

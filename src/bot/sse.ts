@@ -23,7 +23,7 @@ function isAlertEvent(value: unknown): value is DiffEvent {
   return !!event && hasId(event.id) && hasId(event.incidentId) &&
     typeof event.incidentCode === "string" && typeof event.product === "string" &&
     typeof event.message === "string" && typeof event.createdAt === "string" &&
-    typeof event.type === "string" && isAlertKind(event.type)
+    typeof event.type === "string" && (isAlertKind(event.type) || event.type === "INCIDENT_AUTO_CLOSED")
 }
 
 export function parseFrame(frame: string): StreamUpdate | undefined {
