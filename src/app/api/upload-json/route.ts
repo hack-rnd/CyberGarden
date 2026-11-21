@@ -18,13 +18,14 @@ export async function POST(request: Request) {
 
     if (parsed.length === 0) {
       return NextResponse.json(
-        { error: "JSON does not contain valid incidents" },
+        { error: "Файл не содержит валидных инцидентов в формате МТС." },
         { status: 400 }
       );
     }
 
     const configured = process.env.MTS_JSON_PATH || "./data/incidents.json";
     const filePath = path.resolve(process.cwd(), configured);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, JSON.stringify(body, null, 2), "utf-8");
 
     await incidentStore.reloadFromDisk(true);
@@ -34,7 +35,12 @@ export async function POST(request: Request) {
       count: parsed.length,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Failed to upload JSON";
+    const message =
+      err instanceof SyntaxError
+        ? "Некорректный синтаксис JSON-файла."
+        : err instanceof Error
+          ? err.message
+          : "Не удалось загрузить JSON-файл.";
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }

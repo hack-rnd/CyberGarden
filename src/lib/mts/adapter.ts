@@ -21,6 +21,12 @@ const RawIncidentSchema = z
     productName: z.string().optional(),
     product: z.string().optional(),
     service: z.string().nullable().optional(),
+    serviceType: z.string().nullable().optional(),
+    receivingChannel: z.string().nullable().optional(),
+    isNeedUp: z.union([z.boolean(), z.string()]).nullable().optional(),
+    isMaster: z.boolean().nullable().optional(),
+    isEffect: z.boolean().nullable().optional(),
+    isDouble: z.boolean().nullable().optional(),
     header: z.string().optional(),
     title: z.string().optional(),
     shortDescription: z.string().optional(),
@@ -44,6 +50,15 @@ const RawIncidentSchema = z
   .passthrough();
 
 // --- NORMALIZATION HELPERS ---
+
+function parseBooleanFlag(value: boolean | string | null | undefined): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    return normalized === "да" || normalized === "true" || normalized === "1";
+  }
+  return false;
+}
 
 function mapPriority(
   priorityId: number | undefined,
@@ -276,6 +291,12 @@ export function parseMtsJson(rawData: unknown): NormalizedIncident[] {
       groups,
       isActive,
       isRecentlyResolvedCritical,
+      serviceType: raw.serviceType?.trim() || null,
+      receivingChannel: raw.receivingChannel?.trim() || null,
+      isNeedUp: parseBooleanFlag(raw.isNeedUp),
+      isMaster: Boolean(raw.isMaster),
+      isEffect: Boolean(raw.isEffect),
+      isDouble: Boolean(raw.isDouble),
       contentHash: buildContentHash(
         product,
         title,

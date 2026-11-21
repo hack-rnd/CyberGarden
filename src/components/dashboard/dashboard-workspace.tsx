@@ -1,8 +1,18 @@
 "use client";
 
-import { Archive, ArrowDown, BarChart3, Download, Plus, Search, X } from "lucide-react";
+import {
+  Archive,
+  ArrowDown,
+  BarChart3,
+  Download,
+  LoaderCircle,
+  Plus,
+  Search,
+  Upload,
+  X,
+} from "lucide-react";
 import Image from "next/image";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 
 import { DashboardAlerts } from "@/components/alerts/dashboard-alerts";
 import { Button } from "@/components/ui/button";
@@ -35,7 +45,11 @@ import { IncidentArchive, useIncidentArchive } from "./incident-archive";
 import { IncidentViews, statusLabels, useIncidentClock } from "./incident-views";
 import { applyIncidentOverrides, toManualIncident } from "@/lib/manual-process";
 import { saveIncidentOverrides } from "@/lib/manual-process-storage";
-import { ManualProcessEditor, useManualProcesses, type ProcessEditorState } from "./manual-processes";
+import {
+  ManualProcessEditor,
+  useManualProcesses,
+  type ProcessEditorState,
+} from "./manual-processes";
 
 // --- CONSTANTS ---
 
@@ -81,7 +95,9 @@ function MtsBadge({ className }: { className: string }) {
         height={40}
         unoptimized
         className="block size-full scale-105 object-cover"
-        style={{ clipPath: "polygon(0 0, 100% 0, 100% 100%, 60% 100%, 60% 75%, 0 75%)" }}
+        style={{
+          clipPath: "polygon(0 0, 100% 0, 100% 100%, 60% 100%, 60% 75%, 0 75%)",
+        }}
       />
     </span>
   );
@@ -106,24 +122,47 @@ export function DashboardWorkspace({
   const [page, setPage] = useState(1);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState("");
-  const [archiveNotice, setArchiveNotice] = useState<{ code: string } | null>(null);
-  const [processEditor, setProcessEditor] = useState<ProcessEditorState | null>(null);
+  const [uploadingJson, setUploadingJson] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState<{
+    kind: "ok" | "error";
+    text: string;
+  } | null>(null);
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
+  const [archiveNotice, setArchiveNotice] = useState<{ code: string } | null>(
+    null,
+  );
+  const [processEditor, setProcessEditor] = useState<ProcessEditorState | null>(
+    null,
+  );
   const processTrigger = useRef<HTMLElement | null>(null);
   const { processes, overrides, save: saveProcess } = useManualProcesses();
   const manualById = new Map(processes.map((process) => [process.id, process]));
-  const feedIncidents = sourceIncidents?.map((incident) => applyIncidentOverrides(incident, overrides.get(incident.id)));
+  const feedIncidents = sourceIncidents?.map((incident) =>
+    applyIncidentOverrides(incident, overrides.get(incident.id)),
+  );
   const incidents = processes.length
-    ? [...(feedIncidents ?? []), ...processes.map((process) => toManualIncident(process))]
+    ? [
+        ...(feedIncidents ?? []),
+        ...processes.map((process) => toManualIncident(process)),
+      ]
     : feedIncidents;
   const catalog = [...(sourceIncidents ?? []), ...(incidents ?? [])];
   const productOptions = filterOptions(catalog.map(({ product }) => product));
-  const assigneeOptions = filterOptions(catalog.map(({ assigneeTeam }) => assigneeTeam));
+  const assigneeOptions = filterOptions(
+    catalog.map(({ assigneeTeam }) => assigneeTeam),
+  );
 
   useEffect(() => {
     if (!archiveNotice) return;
     const timeout = window.setTimeout(() => setArchiveNotice(null), 5000);
     return () => window.clearTimeout(timeout);
   }, [archiveNotice]);
+
+  useEffect(() => {
+    if (!uploadStatus) return;
+    const timeout = window.setTimeout(() => setUploadStatus(null), 6000);
+    return () => window.clearTimeout(timeout);
+  }, [uploadStatus]);
 
   const [selectedGroup, setSelectedGroup] = useState<IncidentGroupId | null>(
     null,
@@ -132,7 +171,9 @@ export function DashboardWorkspace({
   const [selectedId, setSelectedId] = useState<string>();
   const detailsTrigger = useRef<HTMLElement | null>(null);
   const archive = useIncidentArchive();
-  const archivedById = new Map(archive.entries.map((entry) => [entry.id, entry]));
+  const archivedById = new Map(
+    archive.entries.map((entry) => [entry.id, entry]),
+  );
 
   const incidentIds = new Set(incidents?.map(({ id }) => id));
   const resolutionEvents = new Map<string, number>();
@@ -160,10 +201,14 @@ export function DashboardWorkspace({
   const visibleIncidents = incidents?.flatMap((incident) => {
     const resolvedAt = resolutionEvents.get(incident.id);
     const archived = archivedById.get(incident.id);
-    if (archived && (archived.resolvedAt === undefined || (
-      (incident.status === "resolved" || incident.status === "closed") &&
-      (resolvedAt === undefined || resolvedAt === archived.resolvedAt || resolvedAt <= archived.archivedAt)
-    ))) {
+    if (
+      archived &&
+      (archived.resolvedAt === undefined ||
+        ((incident.status === "resolved" || incident.status === "closed") &&
+          (resolvedAt === undefined ||
+            resolvedAt === archived.resolvedAt ||
+            resolvedAt <= archived.archivedAt)))
+    ) {
       return [];
     }
 
@@ -177,7 +222,8 @@ export function DashboardWorkspace({
     const timestamp = resolvedAt ?? null;
     criticalResolutions.set(incident.id, timestamp);
 
-    return incident.groups.includes("CRITICAL") || overrides.get(incident.id)?.groups !== undefined
+    return incident.groups.includes("CRITICAL") ||
+      overrides.get(incident.id)?.groups !== undefined
       ? [incident]
       : [
           {
@@ -198,7 +244,9 @@ export function DashboardWorkspace({
     if (incident) {
       archive.archive(incident);
       setArchiveNotice({ code: incident.code || incident.id });
-      document.getElementById("incident-list-title")?.focus({ preventScroll: true });
+      document
+        .getElementById("incident-list-title")
+        ?.focus({ preventScroll: true });
     }
   }
 
@@ -249,10 +297,87 @@ export function DashboardWorkspace({
   }
 
   function openProcessEditor(trigger: HTMLElement, id?: string) {
-    const process = id ? incidents?.find((incident) => incident.id === id) : undefined;
+    const process = id
+      ? incidents?.find((incident) => incident.id === id)
+      : undefined;
     if (id && !process) return;
     processTrigger.current = trigger;
-    setProcessEditor({ process, source: sourceIncidents?.find((incident) => incident.id === id) });
+    setProcessEditor({
+      process,
+      source: sourceIncidents?.find((incident) => incident.id === id),
+    });
+  }
+
+  async function handleJsonUpload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || uploadingJson) return;
+
+    setUploadingJson(true);
+    setUploadStatus(null);
+    try {
+      const rawText = await file.text();
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(rawText);
+      } catch {
+        setUploadStatus({
+          kind: "error",
+          text: "Файл не является корректным JSON.",
+        });
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("file", file);
+
+      let response = await fetch("/api/upload-json", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok && (response.status === 400 || response.status === 415)) {
+        response = await fetch("/api/upload-json", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(parsed),
+        });
+      }
+
+      const body = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        count?: number;
+        total?: number;
+      };
+
+      if (!response.ok) {
+        setUploadStatus({
+          kind: "error",
+          text: body.error || "Не удалось загрузить JSON-файл.",
+        });
+        return;
+      }
+
+      const loadedCount =
+        body.count ??
+        body.total ??
+        (Array.isArray(parsed) ? parsed.length : undefined);
+
+      setPage(1);
+      setUploadStatus({
+        kind: "ok",
+        text: loadedCount !== undefined
+          ? `Файл «${file.name}» загружен (${loadedCount} записей).`
+          : `Файл «${file.name}» успешно загружен.`,
+      });
+    } catch {
+      setUploadStatus({
+        kind: "error",
+        text: "Ошибка сети при загрузке JSON-файла.",
+      });
+    } finally {
+      setUploadingJson(false);
+    }
   }
 
   const selectedIncident = incidents?.find(({ id }) => id === selectedId);
@@ -325,9 +450,10 @@ export function DashboardWorkspace({
       (!selectedGroup || incident.groups.includes(selectedGroup)) &&
       (!showRisksOnly || incident.ai?.riskLevel === "high"),
   );
-  const matches = view === "table"
-    ? tableMatches
-    : tableMatches?.filter((incident) => incident.groups.length > 0);
+  const matches =
+    view === "table"
+      ? tableMatches
+      : tableMatches?.filter((incident) => incident.groups.length > 0);
 
   const totalVisibleCount = visibleIncidents?.length ?? 0;
 
@@ -356,7 +482,8 @@ export function DashboardWorkspace({
         <div className="mx-auto flex h-16 max-w-7xl items-center gap-2 px-6 sm:gap-4 lg:px-12">
           <span className="flex shrink-0 items-center gap-2.5 text-label-md font-bold tracking-wide text-white">
             <MtsBadge className="size-8 sm:size-9" />
-            МТС <span className="hidden text-white/80 sm:inline">True Tech</span>
+            МТС{" "}
+            <span className="hidden text-white/80 sm:inline">True Tech</span>
           </span>
 
           <div className="flex min-w-0 flex-1 justify-center">
@@ -396,7 +523,10 @@ export function DashboardWorkspace({
       </div>
       {archiveNotice && (
         <div className="fixed right-4 bottom-4 z-40 flex max-w-[calc(100%-2rem)] items-center gap-3 rounded-panel border border-l-4 border-l-mts-emerald bg-card p-3 text-card-foreground shadow-lg motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-2">
-          <Archive className="size-5 shrink-0 text-mts-emerald" aria-hidden="true" />
+          <Archive
+            className="size-5 shrink-0 text-mts-emerald"
+            aria-hidden="true"
+          />
           <p className="wrap-break-word text-label-md">
             Инцидент <strong>{archiveNotice.code}</strong> скрыт в архив.
           </p>
@@ -422,7 +552,10 @@ export function DashboardWorkspace({
           </h1>
 
           <div className="flex flex-wrap items-center gap-3">
-            <IncidentArchive entries={archive.entries} onRestore={archive.restore} />
+            <IncidentArchive
+              entries={archive.entries}
+              onRestore={archive.restore}
+            />
             <Button
               type="button"
               variant="outline"
@@ -505,18 +638,19 @@ export function DashboardWorkspace({
                       : `Найдено инцидентов: ${matches.length}`
                     : "Ожидаем подключения данных."}
                 </span>
-                {view === "groups" && totalVisibleCount > (matches?.length ?? 0) && (
-                  <button
-                    type="button"
-                    className="cursor-pointer font-medium text-mts-blue underline-offset-4 hover:underline"
-                    onClick={() => {
-                      setView("table");
-                      setPage(1);
-                    }}
-                  >
-                    Показать все {totalVisibleCount} в таблице
-                  </button>
-                )}
+                {view === "groups" &&
+                  totalVisibleCount > (matches?.length ?? 0) && (
+                    <button
+                      type="button"
+                      className="cursor-pointer font-medium text-mts-blue underline-offset-4 hover:underline"
+                      onClick={() => {
+                        setView("table");
+                        setPage(1);
+                      }}
+                    >
+                      Показать все {totalVisibleCount} в таблице
+                    </button>
+                  )}
               </p>
             </div>
 
@@ -541,6 +675,32 @@ export function DashboardWorkspace({
                   Сбросить фильтры
                 </Button>
               )}
+              <input
+                ref={uploadInputRef}
+                type="file"
+                accept=".json,application/json"
+                className="sr-only"
+                aria-label="Выбрать JSON-файл инцидентов"
+                onChange={handleJsonUpload}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                className="h-10 rounded-control"
+                onClick={() => uploadInputRef.current?.click()}
+                disabled={uploadingJson}
+                aria-busy={uploadingJson}
+              >
+                {uploadingJson ? (
+                  <LoaderCircle
+                    className="size-4 motion-safe:animate-spin"
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <Upload className="size-4" aria-hidden="true" />
+                )}
+                {uploadingJson ? "Загружаем…" : "Загрузить JSON"}
+              </Button>
               <Button
                 type="button"
                 variant="outline"
@@ -556,7 +716,22 @@ export function DashboardWorkspace({
           </div>
 
           {exportError && (
-            <p role="alert" className="mt-2 text-label-md text-mts-crimson">{exportError}</p>
+            <p role="alert" className="mt-2 text-label-md text-mts-crimson">
+              {exportError}
+            </p>
+          )}
+
+          {uploadStatus && (
+            <p
+              role={uploadStatus.kind === "error" ? "alert" : "status"}
+              className={
+                uploadStatus.kind === "error"
+                  ? "mt-2 text-label-md text-mts-crimson"
+                  : "mt-2 text-label-md text-[#007A62]"
+              }
+            >
+              {uploadStatus.text}
+            </p>
           )}
 
           <div
@@ -616,7 +791,10 @@ export function DashboardWorkspace({
             </div>
 
             <div className="grid min-w-0 gap-2">
-              <label htmlFor="incident-status-filter" className="text-label-md font-medium">
+              <label
+                htmlFor="incident-status-filter"
+                className="text-label-md font-medium"
+              >
                 Статус инцидента
               </label>
               <Select
@@ -626,14 +804,19 @@ export function DashboardWorkspace({
                   setPage(1);
                 }}
               >
-                <SelectTrigger id="incident-status-filter" className="h-12 w-full rounded-control border-input bg-card text-label-md hover:border-mts-muted">
+                <SelectTrigger
+                  id="incident-status-filter"
+                  className="h-12 w-full rounded-control border-input bg-card text-label-md hover:border-mts-muted"
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="max-h-72 rounded-panel border-border bg-card shadow-[0_4px_16px_rgba(29,32,35,0.08)]">
                   <SelectGroup>
                     <SelectItem value={ALL_VALUE}>Все статусы</SelectItem>
                     {Object.entries(statusLabels).map(([value, label]) => (
-                      <SelectItem key={value} value={value}>{label}</SelectItem>
+                      <SelectItem key={value} value={value}>
+                        {label}
+                      </SelectItem>
                     ))}
                   </SelectGroup>
                 </SelectContent>
@@ -702,7 +885,9 @@ export function DashboardWorkspace({
               onArchive={archiveProcess}
               selected={selectedIncident}
               onOpenDetails={(id, event) => openDetails(id, event.currentTarget)}
-              onEditProcess={(id, event) => openProcessEditor(event.currentTarget, id)}
+              onEditProcess={(id, event) =>
+                openProcessEditor(event.currentTarget, id)
+              }
               isManualProcess={(id) => manualById.has(id)}
               onClose={() => setSelectedId(undefined)}
               restoreFocus={() => {
@@ -724,14 +909,17 @@ export function DashboardWorkspace({
           assignees={assigneeOptions}
           onClose={() => setProcessEditor(null)}
           restoreFocus={() => {
-            if (processTrigger.current?.isConnected) processTrigger.current.focus();
+            if (processTrigger.current?.isConnected)
+              processTrigger.current.focus();
             else document.getElementById("incident-list-title")?.focus();
           }}
           onSave={(fields, id) => {
             const source = processEditor?.source;
             const process = processEditor?.process;
             if (source && process) {
-              const latestSource = sourceIncidents?.find((incident) => incident.id === source.id) ?? source;
+              const latestSource =
+                sourceIncidents?.find((incident) => incident.id === source.id) ??
+                source;
               saveIncidentOverrides(latestSource, process, fields);
               setProcessEditor(null);
               return;

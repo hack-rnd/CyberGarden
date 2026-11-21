@@ -38,8 +38,8 @@ export function buildSystemPrompt(): string {
     ...PRODUCTS.map((product) => `- ${product}`),
     "",
     "Правила оценки риска (riskScore, целое 0-100):",
-    "- 80-100: критический приоритет, SLA просрочен или горит, массовый отказ денежного/ядрового сервиса",
-    "- 50-79: высокий приоритет или деградация ключевого сервиса при живом SLA",
+    "- 80-100: критический приоритет, SLA просрочен или горит, массовый отказ клиентского/ядрового сервиса",
+    "- 50-79: высокий приоритет, клиентский сервис с жалобами или деградация при живом SLA",
     "- 20-49: локальная проблема, есть запас по SLA",
     "- 0-19: минимальные последствия",
     "riskLevel должен быть согласован со score: high >= 70, medium >= 40, иначе low.",
@@ -72,6 +72,12 @@ export function buildIncidentPrompt(incident: NormalizedIncident): string {
       ? "SLA: не задан (инцидент решён, закрыт или на исследовании)"
       : `SLA: дедлайн ${incident.slaDeadline}, осталось ${Math.ceil(incident.slaRemainingMs / 60_000)} мин`;
 
+  const flags: string[] = [];
+  if (incident.isNeedUp) flags.push("требуется устранение последствий (isNeedUp)");
+  if (incident.isMaster) flags.push("мастер-инцидент");
+  if (incident.isEffect) flags.push("следствие/причина дочерних МИ");
+  if (incident.isDouble) flags.push("дубль");
+
   return [
     "Проанализируй инцидент:",
     `- Продукт: ${incident.product}`,
@@ -80,11 +86,16 @@ export function buildIncidentPrompt(incident: NormalizedIncident): string {
     `- Приоритет: ${incident.priority} (исходное значение: ${incident.rawPriority})`,
     `- Статус: ${incident.status} (исходное значение: ${incident.rawStatus})`,
     `- Команда-исполнитель: ${incident.assigneeTeam}`,
+    incident.serviceType ? `- Тип сервиса: ${incident.serviceType}` : null,
+    incident.receivingChannel ? `- Канал регистрации: ${incident.receivingChannel}` : null,
+    flags.length ? `- Особые флаги МИ: ${flags.join(", ")}` : null,
     `- ${slaLine}`,
     `- Группы на дашборде: ${incident.groups.join(", ") || "нет"}`,
     "",
     "Если инцидент назначен на координаторов — рекомендуй команду для передачи.",
-  ].join("\n");
+  ]
+    .filter((line): line is string => line !== null)
+    .join("\n");
 }
 
 // --- LLM ANALYSIS ---
@@ -162,6 +173,10 @@ export function analyzeIncidentRuleBased(incident: NormalizedIncident): Incident
   if (incident.groups.includes("CRITICAL")) {
     riskScore = Math.max(riskScore, 85);
     riskFactors.push("инцидент в группе CRITICAL");
+  }
+  if (incident.serviceType === "Клиентский" && incident.isActive) {
+    riskScore = Math.min(100, riskScore + 5);
+    riskFactors.push("клиентский сервис");
   }
 
   const riskLevel: IncidentAiData["riskLevel"] =

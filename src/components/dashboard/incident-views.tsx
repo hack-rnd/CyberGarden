@@ -99,10 +99,20 @@ function isActiveCritical(incident: DashboardIncident) {
   );
 }
 
+export function formatDuration(seconds: number) {
+  return [
+    Math.floor(seconds / 3600),
+    Math.floor(seconds / 60) % 60,
+    seconds % 60,
+  ]
+    .map((part) => String(part).padStart(2, "0"))
+    .join(":");
+}
+
 export function sortIncidentsForTable(
   incidents: readonly DashboardIncident[],
-  criticalResolutions: ReadonlyMap<string, number | null>,
-) {
+  criticalResolutions: ReadonlyMap<string, number | null> = new Map(),
+): DashboardIncident[] {
   return [...incidents].sort((first, second) => {
     const firstCrit = isActiveCritical(first) ? 0 : 1;
     const secondCrit = isActiveCritical(second) ? 0 : 1;
@@ -116,20 +126,16 @@ export function sortIncidentsForTable(
         (firstResolution === undefined ? -1 : firstResolution ?? 0)
       );
     }
-    const firstDeadline = isIncidentActive(first) ? deadlineFor(first) : Infinity;
-    const secondDeadline = isIncidentActive(second) ? deadlineFor(second) : Infinity;
-    return firstDeadline === secondDeadline ? 0 : firstDeadline - secondDeadline;
+    const firstDeadline = isIncidentActive(first)
+      ? deadlineFor(first)
+      : Infinity;
+    const secondDeadline = isIncidentActive(second)
+      ? deadlineFor(second)
+      : Infinity;
+    return firstDeadline === secondDeadline
+      ? 0
+      : firstDeadline - secondDeadline;
   });
-}
-
-export function formatDuration(seconds: number) {
-  return [
-    Math.floor(seconds / 3600),
-    Math.floor(seconds / 60) % 60,
-    seconds % 60,
-  ]
-    .map((part) => String(part).padStart(2, "0"))
-    .join(":");
 }
 
 function buildPageNumbers(
@@ -148,16 +154,106 @@ function buildPageNumbers(
   return [1, "ellipsis", current - 1, current, current + 1, "ellipsis", total];
 }
 
+function computeSlaProgress(
+  incident: DashboardIncident,
+  now: number,
+  deadline: number,
+): { percent: number; barClass: string } {
+  const created = Date.parse(incident.createdAt ?? "");
+  const totalWindow =
+    Number.isFinite(created) && deadline > created
+      ? deadline - created
+      : 3_600_000;
+  const elapsed = Number.isFinite(created)
+    ? now - created
+    : totalWindow - (deadline - now);
+  const ratio = Math.min(1, Math.max(0, elapsed / totalWindow));
+  const percent = Math.round(ratio * 100);
+
+  if (now >= deadline || percent >= 85) {
+    return { percent: 100, barClass: "bg-mts-red" };
+  }
+  if (percent >= 65) {
+    return { percent, barClass: "bg-mts-amber" };
+  }
+  return { percent: Math.max(6, percent), barClass: "bg-mts-emerald" };
+}
+
 // --- CELL COMPONENTS ---
+
+function ContextBadges({
+  incident,
+  compact = false,
+}: {
+  incident: DashboardIncident;
+  compact?: boolean;
+}) {
+  const badges: { label: string; className: string }[] = [];
+
+  if (incident.isNeedUp) {
+    badges.push({
+      label: "Требует УП",
+      className: "border-mts-amber/40 bg-mts-amber/12 text-[#B8380E]",
+    });
+  }
+  if (incident.isMaster) {
+    badges.push({
+      label: "Мастер-МИ",
+      className: "border-mts-ink/25 bg-mts-ink/8 text-mts-ink",
+    });
+  }
+  if (incident.isEffect) {
+    badges.push({
+      label: "Следствие",
+      className: "border-mts-blue/30 bg-mts-blue/10 text-[#005EC4]",
+    });
+  }
+  if (incident.isDouble) {
+    badges.push({
+      label: "Дубль",
+      className: "border-border bg-muted text-muted-foreground",
+    });
+  }
+  if (incident.serviceType === "Клиентский") {
+    badges.push({
+      label: "Клиентский",
+      className: "border-mts-red/30 bg-mts-red/8 text-mts-crimson",
+    });
+  }
+
+  if (!badges.length) return null;
+
+  return (
+    <div
+      className={cn("flex flex-wrap gap-1", compact ? "mt-1.5" : "mt-2")}
+      aria-label="Атрибуты инцидента"
+    >
+      {badges.map(({ label, className }) => (
+        <Badge
+          key={label}
+          variant="outline"
+          className={cn(
+            "h-auto rounded-pill px-2 py-0.5 text-[11px] leading-tight font-semibold whitespace-nowrap",
+            className,
+          )}
+        >
+          {label}
+        </Badge>
+      ))}
+    </div>
+  );
+}
 
 function SlaTimer({
   incident,
   now,
   resolvedAt,
+  showBar = false,
 }: {
   incident: DashboardIncident;
   now: number | null;
   resolvedAt?: number | null;
+  showBar?: boolean;
 }) {
   const deadline = deadlineFor(incident);
 
@@ -192,23 +288,41 @@ function SlaTimer({
       "text-mts-amber",
   );
 
-  if (seconds <= 0) return <span className={emphasis}>Просрочен</span>;
+  const progress = showBar ? computeSlaProgress(incident, now, deadline) : null;
 
   return (
-    <time dateTime={`PT${seconds}S`} className={emphasis}>
-      {formatDuration(seconds)}
-    </time>
+    <div className="inline-flex min-w-[92px] flex-col gap-1">
+      {seconds <= 0 ? (
+        <span className={emphasis}>Просрочен</span>
+      ) : (
+        <time dateTime={`PT${seconds}S`} className={emphasis}>
+          {formatDuration(seconds)}
+        </time>
+      )}
+      {progress && (
+        <div
+          aria-hidden="true"
+          className="h-1 w-full overflow-hidden rounded-pill bg-border"
+        >
+          <div
+            className={cn(
+              "h-full rounded-pill transition-[width] duration-300",
+              progress.barClass,
+            )}
+            style={{ width: `${progress.percent}%` }}
+          />
+        </div>
+      )}
+    </div>
   );
 }
 
 function OpenItsm({
   incident,
   label = "В ITSM",
-  showUnavailable = false,
 }: {
   incident: DashboardIncident;
   label?: string;
-  showUnavailable?: boolean;
 }) {
   let href: string | undefined;
   try {
@@ -219,16 +333,6 @@ function OpenItsm({
   }
 
   if (!href) {
-    if (showUnavailable) {
-      return (
-        <div className="space-y-2">
-          <Button type="button" variant="outline" disabled className="h-9 rounded-control px-3">
-            {label} <ArrowUpRight aria-hidden="true" />
-          </Button>
-          <p className="text-label-sm text-muted-foreground">Укажите ссылку на запись ITSM при редактировании процесса.</p>
-        </div>
-      );
-    }
     return (
       <span className="text-label-sm text-muted-foreground">
         Нет ссылки в ITSM
@@ -377,17 +481,23 @@ function DetailsButton({
   );
 }
 
-function EditProcessButton({ id, onEdit }: { id: string; onEdit: OpenDetails }) {
+function EditButton({
+  id,
+  onEditProcess,
+}: {
+  id: string;
+  onEditProcess: OpenDetails;
+}) {
   return (
     <Button
       type="button"
       variant="outline"
       aria-haspopup="dialog"
-      aria-label={`Редактировать процесс ${id}`}
+      aria-label={`Редактировать инцидент ${id}`}
       className="h-9 rounded-control px-3"
-      onClick={(event) => onEdit(id, event)}
+      onClick={(event) => onEditProcess(id, event)}
     >
-      <Pencil aria-hidden="true" />
+      <Pencil className="size-3.5" aria-hidden="true" />
       Редактировать
     </Button>
   );
@@ -410,17 +520,18 @@ function IncidentCard({
   resolvedAt?: number | null;
   onArchive: (id: string) => void;
   onOpenDetails: OpenDetails;
-  onEditProcess: OpenDetails;
+  onEditProcess?: OpenDetails;
 }) {
   const criticalActive = isActiveCritical(incident);
+  const isResolved = resolvedAt !== undefined || incident.status === "resolved";
 
   return (
     <article
       className={cn(
         "space-y-4 rounded-panel border bg-card p-4 transition duration-200 hover:shadow-[0_4px_16px_rgba(29,32,35,0.08)] motion-safe:hover:-translate-y-1 motion-reduce:transition-none",
         criticalActive &&
-          "critical-pulse-ring border-l-4 border-l-mts-red bg-mts-red/2",
-        resolvedAt !== undefined && "border-l-4 border-l-mts-emerald",
+          "critical-pulse-ring border-l-4 border-l-mts-red bg-mts-red/[0.02]",
+        !criticalActive && isResolved && "border-l-4 border-l-mts-emerald",
       )}
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -437,6 +548,7 @@ function IncidentCard({
           <h4 className="font-sans text-body-md font-semibold wrap-break-word">
             {incident.product}
           </h4>
+          <ContextBadges incident={incident} compact />
         </div>
         <IncidentStatus incident={incident} resolvedAt={resolvedAt} />
       </div>
@@ -456,12 +568,22 @@ function IncidentCard({
         </div>
       </dl>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-label-md">
-          SLA <SlaTimer incident={incident} now={now} resolvedAt={resolvedAt} />
-        </p>
-        <DetailsButton id={incident.id} onOpenDetails={onOpenDetails} />
-        <EditProcessButton id={incident.id} onEdit={onEditProcess} />
-        <ArchiveButton id={incident.id} onArchive={onArchive} />
+        <div className="flex items-center gap-2 text-label-md">
+          <span className="text-muted-foreground">SLA</span>
+          <SlaTimer
+            incident={incident}
+            now={now}
+            resolvedAt={resolvedAt}
+            showBar
+          />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <DetailsButton id={incident.id} onOpenDetails={onOpenDetails} />
+          {onEditProcess && (
+            <EditButton id={incident.id} onEditProcess={onEditProcess} />
+          )}
+          <ArchiveButton id={incident.id} onArchive={onArchive} />
+        </div>
       </div>
     </article>
   );
@@ -494,8 +616,8 @@ export function IncidentViews({
   onArchive: (id: string) => void;
   selected?: DashboardIncident;
   onOpenDetails: OpenDetails;
-  onEditProcess: OpenDetails;
-  isManualProcess: (id: string) => boolean;
+  onEditProcess?: OpenDetails;
+  isManualProcess?: (id: string) => boolean;
   onClose: () => void;
   restoreFocus: () => void;
   aiControls: AiAnalysisControls;
@@ -504,7 +626,7 @@ export function IncidentViews({
 }) {
   const tableWrapperRef = useRef<HTMLDivElement | null>(null);
   const resolvedAt = selected ? criticalResolutions.get(selected.id) : undefined;
-  const manualDetails = selected && isManualProcess(selected.id);
+  void isManualProcess;
 
   const details = (
     <IncidentDetails
@@ -519,11 +641,16 @@ export function IncidentViews({
       deadline={<IncidentDate createdAt={selected?.slaDeadline} />}
       sla={
         selected && (
-          <SlaTimer incident={selected} now={now} resolvedAt={resolvedAt} />
+          <SlaTimer
+            incident={selected}
+            now={now}
+            resolvedAt={resolvedAt}
+            showBar
+          />
         )
       }
       groups={selected && <GroupTags incident={selected} />}
-      itsm={selected && <OpenItsm incident={selected} label="Открыть в ITSM" showUnavailable={manualDetails} />}
+      itsm={selected && <OpenItsm incident={selected} label="Открыть в ITSM" />}
       onClose={onClose}
       restoreFocus={restoreFocus}
       aiControls={aiControls}
@@ -606,7 +733,7 @@ export function IncidentViews({
         >
           <Table
             aria-label="Инциденты, время создания по Москве"
-            className="min-w-260"
+            className="min-w-[1040px]"
           >
             <TableHeader className="bg-background">
               <TableRow>
@@ -632,6 +759,8 @@ export function IncidentViews({
               {paged.map((incident) => {
                 const rowResolvedAt = criticalResolutions.get(incident.id);
                 const criticalActive = isActiveCritical(incident);
+                const isResolved =
+                  rowResolvedAt !== undefined || incident.status === "resolved";
 
                 return (
                   <TableRow
@@ -644,7 +773,8 @@ export function IncidentViews({
                         "px-3 py-3 text-left font-medium whitespace-nowrap",
                         criticalActive &&
                           "border-l-4 border-l-mts-red font-semibold text-mts-crimson",
-                        (rowResolvedAt !== undefined || incident.status === "resolved") &&
+                        !criticalActive &&
+                          isResolved &&
                           "border-l-4 border-l-mts-emerald",
                       )}
                     >
@@ -658,8 +788,9 @@ export function IncidentViews({
                         {incident.id}
                       </span>
                     </th>
-                    <TableCell className="max-w-45 px-3 py-3 font-medium whitespace-normal">
-                      {incident.product}
+                    <TableCell className="max-w-[200px] px-3 py-3 font-medium whitespace-normal">
+                      <div>{incident.product}</div>
+                      <ContextBadges incident={incident} compact />
                     </TableCell>
                     <TableCell className="min-w-40 px-3 py-3">
                       <GroupTags incident={incident} />
@@ -678,7 +809,7 @@ export function IncidentViews({
                         resolvedAt={rowResolvedAt}
                       />
                     </TableCell>
-                    <TableCell className="max-w-50 px-3 py-3 whitespace-normal">
+                    <TableCell className="max-w-[200px] px-3 py-3 whitespace-normal">
                       {incident.assigneeTeam || "Не назначен"}
                     </TableCell>
                     <TableCell className="px-3 py-3">
@@ -689,19 +820,28 @@ export function IncidentViews({
                         incident={incident}
                         now={now}
                         resolvedAt={rowResolvedAt}
+                        showBar
                       />
                     </TableCell>
                     <TableCell className="px-3 py-3 whitespace-nowrap">
                       {incident.ai ? `${incident.ai.riskScore}%` : "—"}
                     </TableCell>
                     <TableCell className="px-3 py-3">
-                      <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex flex-col items-start gap-1.5">
                         <DetailsButton
                           id={incident.id}
                           onOpenDetails={onOpenDetails}
                         />
-                        <EditProcessButton id={incident.id} onEdit={onEditProcess} />
-                        <ArchiveButton id={incident.id} onArchive={onArchive} />
+                        {onEditProcess && (
+                          <EditButton
+                            id={incident.id}
+                            onEditProcess={onEditProcess}
+                          />
+                        )}
+                        <ArchiveButton
+                          id={incident.id}
+                          onArchive={onArchive}
+                        />
                       </div>
                     </TableCell>
                   </TableRow>

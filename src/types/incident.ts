@@ -60,6 +60,12 @@ export interface NormalizedIncident {
   groups: IncidentGroup[];
   isActive: boolean;
   isRecentlyResolvedCritical: boolean;
+  serviceType?: string | null;
+  receivingChannel?: string | null;
+  isNeedUp?: boolean;
+  isMaster?: boolean;
+  isEffect?: boolean;
+  isDouble?: boolean;
   contentHash: string;
   ai: IncidentAiData | null;
 }
