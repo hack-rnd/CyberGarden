@@ -2114,8 +2114,8 @@
   {
     "sysId": "999000111222333444",
     "id": "INC000099990001",
-    "submitDate": "2026-11-21T03:06:36.411Z",
-    "deadline": "2026-11-21T03:31:36.411Z",
+    "submitDate": "2026-11-21T09:46:41.473Z",
+    "deadline": "2026-11-21T10:11:41.473Z",
     "state": "Завершен",
     "stateEnum": "Resolved",
     "stateId": 7,
@@ -2129,8 +2129,8 @@
     "description": "Массовый отказ узлов обработки видеопотока. Срочно требуется координация и эскалация.",
     "assignedGroupName": "КЦ ИТ Координаторы Массовых Инцидентов",
     "productUrl": null,
-    "completionDate": "2026-11-21T03:06:43.115Z",
+    "completionDate": "2026-11-21T09:47:14.168Z",
     "solution": "Кластер перезапущен, трафик восстановлен.",
-    "lastAssignmentToTeamDateTime": "2026-11-21T03:06:42.146Z"
+    "lastAssignmentToTeamDateTime": "2026-11-21T09:47:02.779Z"
   }
 ]
