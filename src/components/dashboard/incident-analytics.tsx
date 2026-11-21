@@ -65,7 +65,7 @@ function resolveEffectiveEnd(
   return latest;
 }
 
-function summarizeActivity(
+export function summarizeActivity(
   { incidents, events }: AnalyticsProps,
   fallbackEnd: number,
 ) {
@@ -117,7 +117,19 @@ function summarizeActivity(
     }
   }
 
-  return { buckets, trackedSla, overdueSla };
+  return {
+    start,
+    end,
+    buckets,
+    trackedSla,
+    overdueSla,
+    showCreated: incidents?.length === 0 || incidents?.some((incident) =>
+      Number.isFinite(Date.parse(incident.createdAt)),
+    ) === true,
+    showResolved: events !== undefined,
+    totalCreated: buckets.reduce((total, bucket) => total + bucket.created, 0),
+    totalResolved: buckets.reduce((total, bucket) => total + bucket.resolved, 0),
+  };
 }
 
 // --- CHART ---
@@ -135,21 +147,7 @@ function ActivityChart({ incidents, events }: AnalyticsProps) {
     [incidents, events, end],
   );
 
-  const showCreated =
-    incidents?.length === 0 ||
-    incidents?.some((incident) =>
-      Number.isFinite(Date.parse(incident.createdAt ?? "")),
-    );
-  const showResolved = events !== undefined;
-
-  const totalCreated = activity.buckets.reduce(
-    (total, bucket) => total + bucket.created,
-    0,
-  );
-  const totalResolved = activity.buckets.reduce(
-    (total, bucket) => total + bucket.resolved,
-    0,
-  );
+  const { showCreated, showResolved, totalCreated, totalResolved } = activity;
 
   return (
     <div className="space-y-4 px-4 pb-6 sm:px-6">

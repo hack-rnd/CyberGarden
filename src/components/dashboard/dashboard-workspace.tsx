@@ -1,6 +1,7 @@
 "use client";
 
-import { ArrowDown, BarChart3, Search, X } from "lucide-react";
+import { ArrowDown, BarChart3, Download, Plus, Search, X } from "lucide-react";
+import Image from "next/image";
 import { useRef, useState } from "react";
 
 import { DashboardAlerts } from "@/components/alerts/dashboard-alerts";
@@ -30,7 +31,11 @@ import {
   type IncidentGroupId,
 } from "./dashboard-summary";
 import { IncidentAnalytics } from "./incident-analytics";
+import { IncidentArchive, useIncidentArchive } from "./incident-archive";
 import { IncidentViews, useIncidentClock } from "./incident-views";
+import { applyIncidentOverrides, toManualIncident } from "@/lib/manual-process";
+import { saveIncidentOverrides } from "@/lib/manual-process-storage";
+import { ManualProcessEditor, useManualProcesses, type ProcessEditorState } from "./manual-processes";
 
 // --- CONSTANTS ---
 
@@ -57,20 +62,6 @@ type DashboardWorkspaceProps = {
   connection?: "pending" | "live" | "disconnected" | "file-error";
 };
 
-const connectionLabels = {
-  pending: "Ожидание данных",
-  live: "Подключено",
-  disconnected: "Связь потеряна",
-  "file-error": "Ошибка файла данных",
-};
-
-const connectionColors = {
-  pending: "bg-mts-muted",
-  live: "bg-mts-emerald",
-  disconnected: "bg-mts-amber",
-  "file-error": "bg-mts-amber",
-};
-
 function filterOptions(values: (string | undefined)[]) {
   return [
     ...new Set(values.filter((value): value is string => Boolean(value))),
@@ -80,7 +71,7 @@ function filterOptions(values: (string | undefined)[]) {
 // --- WORKSPACE ---
 
 export function DashboardWorkspace({
-  incidents,
+  incidents: sourceIncidents,
   newIncidentIds,
   ai,
   events,
@@ -93,6 +84,16 @@ export function DashboardWorkspace({
   const [sla, setSla] = useState("");
   const [view, setView] = useState<(typeof views)[number]["value"]>("table");
   const [page, setPage] = useState(1);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
+  const [processEditor, setProcessEditor] = useState<ProcessEditorState | null>(null);
+  const processTrigger = useRef<HTMLElement | null>(null);
+  const { processes, overrides, save: saveProcess } = useManualProcesses();
+  const manualById = new Map(processes.map((process) => [process.id, process]));
+  const feedIncidents = sourceIncidents?.map((incident) => applyIncidentOverrides(incident, overrides.get(incident.id)));
+  const incidents = processes.length
+    ? [...(feedIncidents ?? []), ...processes.map((process) => toManualIncident(process))]
+    : feedIncidents;
 
   const [selectedGroup, setSelectedGroup] = useState<IncidentGroupId | null>(
     null,
@@ -100,9 +101,8 @@ export function DashboardWorkspace({
   const [risksOnly, setRisksOnly] = useState(false);
   const [selectedId, setSelectedId] = useState<string>();
   const detailsTrigger = useRef<HTMLElement | null>(null);
-  const [archivedResolutions, setArchivedResolutions] = useState<
-    ReadonlyMap<string, number | null>
-  >(new Map());
+  const archive = useIncidentArchive();
+  const archivedById = new Map(archive.entries.map((entry) => [entry.id, entry]));
 
   const incidentIds = new Set(incidents?.map(({ id }) => id));
   const resolutionEvents = new Map<string, number>();
@@ -129,6 +129,14 @@ export function DashboardWorkspace({
   const criticalResolutions = new Map<string, number | null>();
   const visibleIncidents = incidents?.flatMap((incident) => {
     const resolvedAt = resolutionEvents.get(incident.id);
+    const archived = archivedById.get(incident.id);
+    if (archived && (archived.resolvedAt === undefined || (
+      (incident.status === "resolved" || incident.status === "closed") &&
+      (resolvedAt === undefined || resolvedAt === archived.resolvedAt || resolvedAt <= archived.archivedAt)
+    ))) {
+      return [];
+    }
+
     if (
       incident.status !== "resolved" ||
       (!incident.isRecentlyResolvedCritical && resolvedAt === undefined)
@@ -136,12 +144,10 @@ export function DashboardWorkspace({
       return [incident];
     }
 
-    const archivedAt = archivedResolutions.get(incident.id);
     const timestamp = resolvedAt ?? null;
     criticalResolutions.set(incident.id, timestamp);
-    if (archivedAt === null || archivedAt === timestamp) return [];
 
-    return incident.groups.includes("CRITICAL")
+    return incident.groups.includes("CRITICAL") || overrides.get(incident.id)?.groups !== undefined
       ? [incident]
       : [
           {
@@ -157,12 +163,11 @@ export function DashboardWorkspace({
       ?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
-  function archiveResolution(id: string) {
-    const resolvedAt = criticalResolutions.get(id);
-    if (resolvedAt !== undefined) {
-      setArchivedResolutions((previous) =>
-        new Map(previous).set(id, resolvedAt),
-      );
+  function archiveProcess(id: string) {
+    const incident = incidents?.find((entry) => entry.id === id);
+    if (incident) {
+      archive.archive(incident);
+      document.getElementById("incident-list-title")?.focus({ preventScroll: true });
     }
   }
 
@@ -208,6 +213,13 @@ export function DashboardWorkspace({
     setSelectedGroup(null);
     setRisksOnly(false);
     setPage(1);
+  }
+
+  function openProcessEditor(trigger: HTMLElement, id?: string) {
+    const process = id ? incidents?.find((incident) => incident.id === id) : undefined;
+    if (id && !process) return;
+    processTrigger.current = trigger;
+    setProcessEditor({ process, source: sourceIncidents?.find((incident) => incident.id === id) });
   }
 
   const selectedIncident = incidents?.find(({ id }) => id === selectedId);
@@ -266,7 +278,7 @@ export function DashboardWorkspace({
       }),
     );
 
-  const matches = visibleIncidents?.filter(
+  const tableMatches = visibleIncidents?.filter(
     (incident) =>
       (!search ||
         [incident.id, incident.product, incident.description].some((value) =>
@@ -276,27 +288,50 @@ export function DashboardWorkspace({
       (!activeTeam || incident.assigneeTeam === activeTeam) &&
       (!sla || currentSlaStatus(incident, now) === sla) &&
       (!selectedGroup || incident.groups.includes(selectedGroup)) &&
-      (view === "table" || incident.groups.length > 0) &&
       (!showRisksOnly || incident.ai?.riskLevel === "high"),
   );
+  const matches = view === "table"
+    ? tableMatches
+    : tableMatches?.filter((incident) => incident.groups.length > 0);
 
   const totalVisibleCount = visibleIncidents?.length ?? 0;
+
+  async function exportToExcel() {
+    if (!incidents || !tableMatches || exporting) return;
+    setExporting(true);
+    setExportError("");
+    try {
+      const { downloadIncidentWorkbook } = await import("./incident-export");
+      await downloadIncidentWorkbook({
+        incidents,
+        tableIncidents: tableMatches,
+        events,
+        criticalResolutions,
+      });
+    } catch {
+      setExportError("Не удалось скачать Excel. Попробуйте ещё раз.");
+    } finally {
+      setExporting(false);
+    }
+  }
 
   return (
     <>
       <header className="fixed inset-x-0 top-0 z-10 border-b border-white/10 bg-mts-ink text-white">
-        <div className="mx-auto flex h-16 max-w-7xl items-center gap-2 px-6 sm:gap-4 lg:px-12">
+        <div className="mx-auto flex h-16 max-w-7xl items-center gap-2 px-6 sm:gap-4 lg:grid lg:grid-cols-[minmax(0,1fr)_min(40%,28rem)_minmax(0,1fr)] lg:px-12">
           <span className="flex shrink-0 items-center gap-2.5 text-label-md font-bold tracking-wide text-white">
-            <span
-              className="flex size-6 items-center justify-center rounded-md bg-mts-red text-[11px] font-bold text-white"
-              aria-hidden="true"
-            >
-              M
-            </span>
+            <Image
+              src="/mts-logo.png"
+              alt=""
+              width={28}
+              height={28}
+              unoptimized
+              className="size-7 rounded-sm object-cover"
+            />
             МТС <span className="hidden text-white/80 sm:inline">True Tech</span>
           </span>
 
-          <div className="relative min-w-0 flex-1 lg:max-w-md">
+          <div className="relative min-w-0 flex-1">
             <Search
               aria-hidden="true"
               className="pointer-events-none absolute top-3.5 left-3.5 size-4 text-white/50"
@@ -314,20 +349,7 @@ export function DashboardWorkspace({
             />
           </div>
 
-          <span
-            role="status"
-            className="ml-auto flex shrink-0 items-center gap-2 text-label-sm text-white/75"
-          >
-            <span
-              aria-hidden="true"
-              className={`size-2 rounded-pill ${connectionColors[connection]}`}
-            />
-            <span className="sr-only md:not-sr-only">
-              JSON Live · {connectionLabels[connection]}
-            </span>
-          </span>
-
-          <div className="flex items-center gap-1 [&_button]:text-white [&_button:hover]:bg-white/10 [&_button:hover]:text-white">
+          <div className="ml-auto flex items-center gap-1 lg:ml-0 lg:justify-self-center [&>button]:text-white [&>button:hover]:bg-white/10 [&>button:hover]:text-white">
             <DashboardAlerts events={liveEvents} onOpen={openDetails} />
             <EventFeed
               events={events}
@@ -339,6 +361,15 @@ export function DashboardWorkspace({
         </div>
       </header>
 
+      <Image
+        src="/mts-logo.png"
+        alt=""
+        width={36}
+        height={36}
+        unoptimized
+        className="pointer-events-none fixed bottom-4 left-2 z-10 size-6 rounded-sm object-cover sm:left-4 sm:size-9"
+      />
+
       <main className="mx-auto w-full max-w-7xl px-6 pt-24 pb-12 lg:px-12">
         <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
           <h1 className="text-2xl tracking-tight sm:text-headline-lg">
@@ -346,6 +377,7 @@ export function DashboardWorkspace({
           </h1>
 
           <div className="flex flex-wrap items-center gap-3">
+            <IncidentArchive entries={archive.entries} onRestore={archive.restore} />
             <Button
               type="button"
               variant="outline"
@@ -424,7 +456,7 @@ export function DashboardWorkspace({
                 <span>
                   {matches
                     ? view === "groups"
-                      ? `В 4 ключевых группах: ${matches.length} из ${totalVisibleCount} (остальные — штатные и архивные)`
+                      ? `В 4 ключевых группах: ${matches.length} из ${totalVisibleCount}`
                       : `Найдено инцидентов: ${matches.length}`
                     : "Ожидаем подключения данных."}
                 </span>
@@ -443,18 +475,44 @@ export function DashboardWorkspace({
               </p>
             </div>
 
-            {hasAnyFilter && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                aria-haspopup="dialog"
+                className="h-10 rounded-control bg-mts-crimson text-white hover:bg-mts-wine"
+                onClick={(event) => openProcessEditor(event.currentTarget)}
+              >
+                <Plus aria-hidden="true" />
+                Добавить процесс
+              </Button>
+              {hasAnyFilter && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-10 rounded-control"
+                  onClick={resetAllFilters}
+                >
+                  <X className="size-4" aria-hidden="true" />
+                  Сбросить фильтры
+                </Button>
+              )}
               <Button
                 type="button"
                 variant="outline"
                 className="h-10 rounded-control"
-                onClick={resetAllFilters}
+                onClick={exportToExcel}
+                disabled={!tableMatches || exporting}
+                aria-busy={exporting}
               >
-                <X className="size-4" aria-hidden="true" />
-                Сбросить фильтры
+                <Download className="size-4" aria-hidden="true" />
+                {exporting ? "Готовим Excel…" : "Скачать Excel"}
               </Button>
-            )}
+            </div>
           </div>
+
+          {exportError && (
+            <p role="alert" className="mt-2 text-label-md text-mts-crimson">{exportError}</p>
+          )}
 
           <div
             aria-label="Фильтры и вид списка"
@@ -571,9 +629,11 @@ export function DashboardWorkspace({
               selectedGroup={selectedGroup}
               now={now}
               criticalResolutions={criticalResolutions}
-              onArchive={archiveResolution}
+              onArchive={archiveProcess}
               selected={selectedIncident}
               onOpenDetails={(id, event) => openDetails(id, event.currentTarget)}
+              onEditProcess={(id, event) => openProcessEditor(event.currentTarget, id)}
+              isManualProcess={(id) => manualById.has(id)}
               onClose={() => setSelectedId(undefined)}
               restoreFocus={() => {
                 if (detailsTrigger.current?.isConnected) {
@@ -588,6 +648,31 @@ export function DashboardWorkspace({
             />
           )}
         </section>
+        <ManualProcessEditor
+          editor={processEditor}
+          onClose={() => setProcessEditor(null)}
+          restoreFocus={() => {
+            if (processTrigger.current?.isConnected) processTrigger.current.focus();
+            else document.getElementById("incident-list-title")?.focus();
+          }}
+          onSave={(fields, id) => {
+            const source = processEditor?.source;
+            const process = processEditor?.process;
+            if (source && process) {
+              const latestSource = sourceIncidents?.find((incident) => incident.id === source.id) ?? source;
+              saveIncidentOverrides(latestSource, process, fields);
+              setProcessEditor(null);
+              return;
+            }
+            const savedId = saveProcess(fields, id);
+            setProcessEditor(null);
+            if (!id) {
+              resetAllFilters();
+              setQuery(savedId);
+              setView("table");
+            }
+          }}
+        />
       </main>
     </>
   );

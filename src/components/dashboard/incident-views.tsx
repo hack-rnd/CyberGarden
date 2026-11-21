@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUpRight, ChevronLeft, ChevronRight } from "lucide-react";
+import { ArrowUpRight, ChevronLeft, ChevronRight, Pencil } from "lucide-react";
 import { useMemo, useRef, useSyncExternalStore, type MouseEvent } from "react";
 
 import { cn } from "@/lib/utils";
@@ -30,7 +30,7 @@ import type { AiAnalysisControls } from "./dashboard-ai";
 
 const PAGE_SIZE = 10;
 
-const statusLabels: Record<DashboardIncident["status"], string> = {
+export const statusLabels: Record<DashboardIncident["status"], string> = {
   new: "Новый",
   in_progress: "В работе",
   waiting: "Ожидает",
@@ -41,14 +41,14 @@ const statusLabels: Record<DashboardIncident["status"], string> = {
 
 const statusBadgeClasses: Record<DashboardIncident["status"], string> = {
   new: "border-mts-amber/35 bg-mts-amber/12 text-[#B8380E]",
-  waiting: "border-mts-amber/35 bg-mts-amber/12 text-[#B8380E]",
+  waiting: "border-amber-400 bg-amber-100 text-amber-900",
   in_progress: "border-mts-blue/30 bg-mts-blue/10 text-[#005EC4]",
   investigation: "border-mts-blue/25 bg-mts-blue/10 text-[#005EC4]",
   resolved: "border-mts-emerald/40 bg-mts-emerald/15 text-[#007A62]",
   closed: "border-border bg-muted text-muted-foreground",
 };
 
-const priorityLabels = {
+export const priorityLabels = {
   critical: "Критический",
   high: "Высокий",
   medium: "Средний",
@@ -99,7 +99,30 @@ function isActiveCritical(incident: DashboardIncident) {
   );
 }
 
-function formatDuration(seconds: number) {
+export function sortIncidentsForTable(
+  incidents: readonly DashboardIncident[],
+  criticalResolutions: ReadonlyMap<string, number | null>,
+) {
+  return [...incidents].sort((first, second) => {
+    const firstCrit = isActiveCritical(first) ? 0 : 1;
+    const secondCrit = isActiveCritical(second) ? 0 : 1;
+    if (firstCrit !== secondCrit) return firstCrit - secondCrit;
+
+    const firstResolution = criticalResolutions.get(first.id);
+    const secondResolution = criticalResolutions.get(second.id);
+    if (firstResolution !== undefined || secondResolution !== undefined) {
+      return (
+        (secondResolution === undefined ? -1 : secondResolution ?? 0) -
+        (firstResolution === undefined ? -1 : firstResolution ?? 0)
+      );
+    }
+    const firstDeadline = isIncidentActive(first) ? deadlineFor(first) : Infinity;
+    const secondDeadline = isIncidentActive(second) ? deadlineFor(second) : Infinity;
+    return firstDeadline === secondDeadline ? 0 : firstDeadline - secondDeadline;
+  });
+}
+
+export function formatDuration(seconds: number) {
   return [
     Math.floor(seconds / 3600),
     Math.floor(seconds / 60) % 60,
@@ -181,9 +204,11 @@ function SlaTimer({
 function OpenItsm({
   incident,
   label = "В ITSM",
+  showUnavailable = false,
 }: {
   incident: DashboardIncident;
   label?: string;
+  showUnavailable?: boolean;
 }) {
   let href: string | undefined;
   try {
@@ -194,6 +219,16 @@ function OpenItsm({
   }
 
   if (!href) {
+    if (showUnavailable) {
+      return (
+        <div className="space-y-2">
+          <Button type="button" variant="outline" disabled className="h-9 rounded-control px-3">
+            {label} <ArrowUpRight aria-hidden="true" />
+          </Button>
+          <p className="text-label-sm text-muted-foreground">Укажите ссылку на запись ITSM при редактировании процесса.</p>
+        </div>
+      );
+    }
     return (
       <span className="text-label-sm text-muted-foreground">
         Нет ссылки в ITSM
@@ -283,7 +318,7 @@ function IncidentStatus({
         variant="outline"
         className="h-auto rounded-pill border-mts-emerald bg-mts-emerald/15 px-2.5 py-1 text-label-sm font-semibold text-[#007A62]"
       >
-        Критический решён <span aria-hidden="true">✓</span>
+        Критический решён
       </Badge>
     );
   }
@@ -342,6 +377,22 @@ function DetailsButton({
   );
 }
 
+function EditProcessButton({ id, onEdit }: { id: string; onEdit: OpenDetails }) {
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      aria-haspopup="dialog"
+      aria-label={`Редактировать процесс ${id}`}
+      className="h-9 rounded-control px-3"
+      onClick={(event) => onEdit(id, event)}
+    >
+      <Pencil aria-hidden="true" />
+      Редактировать
+    </Button>
+  );
+}
+
 // --- CARD VIEW ---
 
 function IncidentCard({
@@ -351,6 +402,7 @@ function IncidentCard({
   resolvedAt,
   onArchive,
   onOpenDetails,
+  onEditProcess,
 }: {
   incident: DashboardIncident;
   currentGroup: IncidentGroupId;
@@ -358,6 +410,7 @@ function IncidentCard({
   resolvedAt?: number | null;
   onArchive: (id: string) => void;
   onOpenDetails: OpenDetails;
+  onEditProcess: OpenDetails;
 }) {
   const criticalActive = isActiveCritical(incident);
 
@@ -366,7 +419,7 @@ function IncidentCard({
       className={cn(
         "space-y-4 rounded-panel border bg-card p-4 transition duration-200 hover:shadow-[0_4px_16px_rgba(29,32,35,0.08)] motion-safe:hover:-translate-y-1 motion-reduce:transition-none",
         criticalActive &&
-          "critical-pulse-ring border-l-4 border-l-mts-red bg-mts-red/[0.02]",
+          "critical-pulse-ring border-l-4 border-l-mts-red bg-mts-red/2",
         resolvedAt !== undefined && "border-l-4 border-l-mts-emerald",
       )}
     >
@@ -407,10 +460,8 @@ function IncidentCard({
           SLA <SlaTimer incident={incident} now={now} resolvedAt={resolvedAt} />
         </p>
         <DetailsButton id={incident.id} onOpenDetails={onOpenDetails} />
-        <OpenItsm incident={incident} />
-        {resolvedAt !== undefined && (
-          <ArchiveButton id={incident.id} onArchive={onArchive} />
-        )}
+        <EditProcessButton id={incident.id} onEdit={onEditProcess} />
+        <ArchiveButton id={incident.id} onArchive={onArchive} />
       </div>
     </article>
   );
@@ -427,6 +478,8 @@ export function IncidentViews({
   onArchive,
   selected,
   onOpenDetails,
+  onEditProcess,
+  isManualProcess,
   onClose,
   restoreFocus,
   aiControls,
@@ -441,6 +494,8 @@ export function IncidentViews({
   onArchive: (id: string) => void;
   selected?: DashboardIncident;
   onOpenDetails: OpenDetails;
+  onEditProcess: OpenDetails;
+  isManualProcess: (id: string) => boolean;
   onClose: () => void;
   restoreFocus: () => void;
   aiControls: AiAnalysisControls;
@@ -449,6 +504,7 @@ export function IncidentViews({
 }) {
   const tableWrapperRef = useRef<HTMLDivElement | null>(null);
   const resolvedAt = selected ? criticalResolutions.get(selected.id) : undefined;
+  const manualDetails = selected && isManualProcess(selected.id);
 
   const details = (
     <IncidentDetails
@@ -467,7 +523,7 @@ export function IncidentViews({
         )
       }
       groups={selected && <GroupTags incident={selected} />}
-      itsm={selected && <OpenItsm incident={selected} label="Открыть в ITSM" />}
+      itsm={selected && <OpenItsm incident={selected} label="Открыть в ITSM" showUnavailable={manualDetails} />}
       onClose={onClose}
       restoreFocus={restoreFocus}
       aiControls={aiControls}
@@ -475,30 +531,7 @@ export function IncidentViews({
   );
 
   const sorted = useMemo(
-    () =>
-      [...incidents].sort((first, second) => {
-        const firstCrit = isActiveCritical(first) ? 0 : 1;
-        const secondCrit = isActiveCritical(second) ? 0 : 1;
-        if (firstCrit !== secondCrit) return firstCrit - secondCrit;
-
-        const firstResolution = criticalResolutions.get(first.id);
-        const secondResolution = criticalResolutions.get(second.id);
-        if (firstResolution !== undefined || secondResolution !== undefined) {
-          return (
-            (secondResolution === undefined ? -1 : secondResolution ?? 0) -
-            (firstResolution === undefined ? -1 : firstResolution ?? 0)
-          );
-        }
-        const firstDeadline = isIncidentActive(first)
-          ? deadlineFor(first)
-          : Infinity;
-        const secondDeadline = isIncidentActive(second)
-          ? deadlineFor(second)
-          : Infinity;
-        return firstDeadline === secondDeadline
-          ? 0
-          : firstDeadline - secondDeadline;
-      }),
+    () => sortIncidentsForTable(incidents, criticalResolutions),
     [incidents, criticalResolutions],
   );
 
@@ -573,7 +606,7 @@ export function IncidentViews({
         >
           <Table
             aria-label="Инциденты, время создания по Москве"
-            className="min-w-[1040px]"
+            className="min-w-260"
           >
             <TableHeader className="bg-background">
               <TableRow>
@@ -625,7 +658,7 @@ export function IncidentViews({
                         {incident.id}
                       </span>
                     </th>
-                    <TableCell className="max-w-[180px] px-3 py-3 font-medium whitespace-normal">
+                    <TableCell className="max-w-45 px-3 py-3 font-medium whitespace-normal">
                       {incident.product}
                     </TableCell>
                     <TableCell className="min-w-40 px-3 py-3">
@@ -645,7 +678,7 @@ export function IncidentViews({
                         resolvedAt={rowResolvedAt}
                       />
                     </TableCell>
-                    <TableCell className="max-w-[200px] px-3 py-3 whitespace-normal">
+                    <TableCell className="max-w-50 px-3 py-3 whitespace-normal">
                       {incident.assigneeTeam || "Не назначен"}
                     </TableCell>
                     <TableCell className="px-3 py-3">
@@ -667,13 +700,8 @@ export function IncidentViews({
                           id={incident.id}
                           onOpenDetails={onOpenDetails}
                         />
-                        <OpenItsm incident={incident} />
-                        {rowResolvedAt !== undefined && (
-                          <ArchiveButton
-                            id={incident.id}
-                            onArchive={onArchive}
-                          />
-                        )}
+                        <EditProcessButton id={incident.id} onEdit={onEditProcess} />
+                        <ArchiveButton id={incident.id} onArchive={onArchive} />
                       </div>
                     </TableCell>
                   </TableRow>
@@ -782,6 +810,7 @@ export function IncidentViews({
                         resolvedAt={criticalResolutions.get(incident.id)}
                         onArchive={onArchive}
                         onOpenDetails={onOpenDetails}
+                        onEditProcess={onEditProcess}
                       />
                     </li>
                   ))}

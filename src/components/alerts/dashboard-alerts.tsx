@@ -211,20 +211,22 @@ export function DashboardAlerts({
           return (
             <article
               key={event.id}
-              className={`pointer-events-auto rounded-panel border border-l-4 bg-card p-4 ${alert.border}`}
+              className={`pointer-events-auto relative rounded-panel border border-l-4 bg-card p-4 text-card-foreground ${alert.border}`}
             >
-              <div className="flex items-start justify-between gap-2">
-                <p className="text-label-md font-semibold">{alert.label}</p>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="Закрыть уведомление"
-                  onClick={() => dismiss(event.id)}
-                >
-                  <X aria-hidden="true" />
-                </Button>
-              </div>
+              <p className="mb-2 flex min-h-10 items-center pr-12 text-label-md font-semibold">
+                {alert.label}
+              </p>
+              <Button
+                type="button"
+                variant="secondary"
+                size="icon"
+                aria-label="Закрыть уведомление"
+                title="Закрыть уведомление"
+                className="absolute top-4 right-4 size-10 rounded-control"
+                onClick={() => dismiss(event.id)}
+              >
+                <X aria-hidden="true" className="size-5" />
+              </Button>
 
               <p className="text-label-md wrap-break-word text-muted-foreground">
                 {event.message}

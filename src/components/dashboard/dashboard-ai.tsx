@@ -1,9 +1,11 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { LoaderCircle } from "lucide-react";
+import { LoaderCircle, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { manualProcessAnalysis, manualProcessInput } from "@/lib/manual-process";
+import { getManualProcessSnapshot, readManualProcesses, saveManualProcessAnalysis } from "@/lib/manual-process-storage";
 import type { IncidentAiData, NormalizedIncident } from "@/types/incident";
 
 type DigestConcern = Pick<IncidentAiData, "riskScore" | "riskLevel" | "summary" | "recommendedTeam">
@@ -39,11 +41,16 @@ export function useDashboardAi() {
 
   const analysis = useMutation({
     mutationFn: async (incidentId: string | null) => {
+      const manualProcess = incidentId?.startsWith("PR-")
+        ? readManualProcesses(getManualProcessSnapshot()).find(({ id }) => id === incidentId)
+        : undefined;
       const response = await fetch("/api/ai/analyze", {
         method: "POST",
         ...(incidentId && {
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ incidentId }),
+          body: JSON.stringify(manualProcess
+            ? { manualProcess: manualProcessInput.parse(manualProcess) }
+            : { incidentId }),
         }),
       });
       if (response.status === 404) {
@@ -52,8 +59,16 @@ export function useDashboardAi() {
           : "Сервис ИИ пока недоступен.");
       }
       if (!response.ok) throw new Error("Не удалось выполнить анализ ИИ.");
+      if (manualProcess) {
+        const result = await response.json();
+        const analysis = manualProcessAnalysis.safeParse(result.ai);
+        if (!analysis.success) throw new Error("Сервис ИИ вернул некорректный результат.");
+        saveManualProcessAnalysis(manualProcess, analysis.data);
+        return "manual";
+      }
     },
-    onSuccess: async () => {
+    onSuccess: async (result) => {
+      if (result === "manual") return;
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: digestKey }),
         queryClient.invalidateQueries({ queryKey: ["incidents"] }),
@@ -72,6 +87,7 @@ export function AnalyzeButton({
   controls: AiAnalysisControls;
   incidentId?: string | null;
 }) {
+  const isIncidentAnalysis = incidentId !== null;
   const isCurrent = controls.variables === incidentId;
   const pending = controls.isPending && isCurrent;
 
@@ -79,13 +95,22 @@ export function AnalyzeButton({
     <div className="space-y-2">
       <Button
         type="button"
-        variant="outline"
-        className="min-h-10 rounded-control"
+        variant={isIncidentAnalysis ? "default" : "outline"}
+        className={isIncidentAnalysis
+          ? "min-h-11 w-full gap-2 rounded-control bg-mts-crimson px-5 text-base font-semibold text-white hover:bg-mts-wine sm:w-auto"
+          : "min-h-10 rounded-control"}
         disabled={controls.isPending}
         aria-busy={pending}
         onClick={() => controls.mutate(incidentId)}
       >
-        {pending && <LoaderCircle aria-hidden="true" className="motion-safe:animate-spin [animation-duration:400ms]" />}
+        {pending && (
+          <LoaderCircle
+            aria-hidden="true"
+            className="motion-safe:animate-spin"
+            style={{ animationDuration: "400ms" }}
+          />
+        )}
+        {isIncidentAnalysis && !pending && <Sparkles aria-hidden="true" className="size-5" />}
         {pending ? "Анализируем…" : "Анализ AI"}
       </Button>
       {isCurrent && controls.isError && (

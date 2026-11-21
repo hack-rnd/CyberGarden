@@ -54,9 +54,7 @@ function HandoffText({ text }: { text: string }) {
   );
 }
 
-export function IncidentDetails({
-  incident, status, priority, created, deadline, sla, groups, itsm, onClose, restoreFocus, aiControls,
-}: {
+export function IncidentDetails(props: {
   incident?: DashboardIncident;
   status?: ReactNode;
   priority?: string;
@@ -69,13 +67,19 @@ export function IncidentDetails({
   restoreFocus: () => void;
   aiControls: AiAnalysisControls;
 }) {
+  const [lastDetails, setLastDetails] = useState(props);
+  if (props.incident && props !== lastDetails) setLastDetails(props);
+
+  const { incident, status, priority, created, deadline, sla, groups, itsm, aiControls } =
+    props.incident ? props : lastDetails;
+  const { onClose, restoreFocus } = props;
   const analysis = incident?.ai;
   const risk = analysis?.riskScore;
   const riskScore = typeof risk === "number" && Number.isFinite(risk) && risk >= 0 && risk <= 100 ? risk : undefined;
   const handoff = analysis?.handoffMessage.trim();
 
   return (
-    <Sheet open={Boolean(incident)} onOpenChange={(open) => { if (!open) onClose(); }}>
+    <Sheet open={Boolean(props.incident)} onOpenChange={(open) => { if (!open) onClose(); }}>
       {incident && (
         <SheetContent
           showCloseButton={false}

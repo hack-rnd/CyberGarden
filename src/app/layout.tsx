@@ -17,6 +17,7 @@ const unbounded = Unbounded({
 export const metadata: Metadata = {
   title: "МТС — Центр управления инцидентами",
   description: "Мониторинг инцидентов и ИИ-рекомендации в реальном времени",
+  icons: { icon: { url: "/mts-logo.png", type: "image/png" } },
 };
 
 export default function RootLayout({
