@@ -1,12 +1,11 @@
 "use client"
 
 import { useState } from "react"
-import { IncidentAlertControls, IncidentToastTray, useIncidentAlerts } from "@/components/alerts/incidentAlerts"
+import { DashboardAlerts } from "@/components/alerts/dashboard-alerts"
 import { useLiveIncidents } from "@/hooks/useLiveIncidents"
 
 export default function AlertsPage() {
-  const alerts = useIncidentAlerts()
-  const { data, connectionState, isLoading, isError } = useLiveIncidents({ onEvents: alerts.onEvents })
+  const { data, connectionState, isLoading, isError, recentEvents } = useLiveIncidents()
   const [selectedId, setSelectedId] = useState<string>()
   const selected = data?.incidents.find((incident) => incident.id === selectedId)
 
@@ -24,7 +23,7 @@ export default function AlertsPage() {
             {connectionState === "connected" ? "Поток событий подключён" : "Подключение к потоку событий…"}
           </p>
         </div>
-        <IncidentAlertControls alerts={alerts} />
+        <div className="flex gap-2"><DashboardAlerts events={recentEvents} onOpen={openIncident} /></div>
       </header>
 
       {selected && (
@@ -54,7 +53,6 @@ export default function AlertsPage() {
         ))}
       </ul>
 
-      <IncidentToastTray alerts={alerts} onOpenIncident={openIncident} />
     </main>
   )
 }

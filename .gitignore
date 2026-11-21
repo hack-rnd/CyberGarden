@@ -56,3 +56,6 @@ dist/
 /data/incidents.json.*.tmp.backup
 /data/character_problems.json.*.tmp
 /data/character_problems.json.*.tmp.backup
+
+/data/incidents.demo.json
+/data/incidents.demo.json.*.tmp
