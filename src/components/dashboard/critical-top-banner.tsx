@@ -52,7 +52,7 @@ export function CriticalTopBanner({
   return (
     <section
       aria-labelledby="critical-top-banner-title"
-      className="mb-6 rounded-panel border-2 border-mts-red bg-card p-6"
+      className="critical-banner-flash mb-6 rounded-panel border-2 border-mts-red p-6"
     >
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <h2
