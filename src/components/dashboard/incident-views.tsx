@@ -6,8 +6,10 @@ import {
   ChevronRight,
   Pencil,
   UserPlus,
+  X,
 } from "lucide-react";
 import {
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -41,6 +43,8 @@ import type { AiAnalysisControls } from "./dashboard-ai";
 // --- CONSTANTS ---
 
 export const PAGE_SIZE = 10;
+const IDLE_WAITING_MS = 20_000;
+const URGENT_SLA_THRESHOLD = 0.25;
 
 export const statusLabels: Record<DashboardIncident["status"], string> = {
   new: "Новый",
@@ -110,7 +114,7 @@ export function useIncidentClock(enabled: boolean) {
   );
 }
 
-// --- FORMATTERS ---
+// --- SORTING & PRIORITY HELPERS ---
 
 function isActiveCritical(incident: DashboardIncident) {
   return (
@@ -124,12 +128,64 @@ function hasRealTeam(team: string | null | undefined): boolean {
   return !UNASSIGNED_TEAM_LABELS.has(team.trim().toLowerCase());
 }
 
-function isFreshUnassigned(incident: DashboardIncident): boolean {
-  return (
-    isIncidentActive(incident) &&
-    incident.id.startsWith("INC000099") &&
-    !incident.assigneeEmployee?.trim()
-  );
+function hasAssignedEmployee(incident: DashboardIncident): boolean {
+  return Boolean(incident.assigneeEmployee?.trim());
+}
+
+function getSlaRemainingRatio(
+  incident: DashboardIncident,
+  now: number | null,
+): number | null {
+  if (!isIncidentActive(incident)) return null;
+  const deadline = deadlineFor(incident);
+  if (!Number.isFinite(deadline)) return null;
+
+  const created = Date.parse(incident.createdAt ?? "");
+  const totalWindow =
+    Number.isFinite(created) && deadline > created
+      ? deadline - created
+      : 3_600_000;
+
+  if (now !== null) {
+    return (deadline - now) / totalWindow;
+  }
+  if (incident.slaRemainingMs !== null) {
+    return incident.slaRemainingMs / totalWindow;
+  }
+  return null;
+}
+
+function isSlaBelowQuarter(
+  incident: DashboardIncident,
+  now: number | null,
+): boolean {
+  const ratio = getSlaRemainingRatio(incident, now);
+  return ratio !== null && ratio < URGENT_SLA_THRESHOLD;
+}
+
+function getIncidentRankTier(
+  incident: DashboardIncident,
+  now: number | null,
+): number {
+  if (isActiveCritical(incident)) return 0;
+
+  if (!isIncidentActive(incident)) {
+    return incident.status === "resolved" ? 5 : 6;
+  }
+
+  if (isSlaBelowQuarter(incident, now)) return 1;
+
+  if (
+    !hasAssignedEmployee(incident) ||
+    incident.status === "new" ||
+    incident.status === "waiting"
+  ) {
+    return 2;
+  }
+
+  if (incident.status === "in_progress") return 3;
+
+  return 4;
 }
 
 export function formatDuration(seconds: number) {
@@ -145,17 +201,36 @@ export function formatDuration(seconds: number) {
 export function sortIncidentsForTable(
   incidents: readonly DashboardIncident[],
   criticalResolutions: ReadonlyMap<string, number | null> = new Map(),
+  now: number | null = null,
 ): DashboardIncident[] {
   return [...incidents].sort((first, second) => {
-    const firstCrit = isActiveCritical(first) ? 0 : 1;
-    const secondCrit = isActiveCritical(second) ? 0 : 1;
-    if (firstCrit !== secondCrit) return firstCrit - secondCrit;
+    const firstTier = getIncidentRankTier(first, now);
+    const secondTier = getIncidentRankTier(second, now);
+    if (firstTier !== secondTier) return firstTier - secondTier;
 
-    const firstFresh = isFreshUnassigned(first) ? 0 : 1;
-    const secondFresh = isFreshUnassigned(second) ? 0 : 1;
-    if (firstFresh !== secondFresh) return firstFresh - secondFresh;
+    if (firstTier === 0) {
+      const firstUnassigned = hasAssignedEmployee(first) ? 1 : 0;
+      const secondUnassigned = hasAssignedEmployee(second) ? 1 : 0;
+      if (firstUnassigned !== secondUnassigned) {
+        return firstUnassigned - secondUnassigned;
+      }
 
-    if (firstCrit === 0 || firstFresh === 0) {
+      const firstUrgent = isSlaBelowQuarter(first, now) ? 0 : 1;
+      const secondUrgent = isSlaBelowQuarter(second, now) ? 0 : 1;
+      if (firstUrgent !== secondUrgent) return firstUrgent - secondUrgent;
+
+      const firstCreated = Date.parse(first.createdAt ?? "") || 0;
+      const secondCreated = Date.parse(second.createdAt ?? "") || 0;
+      if (firstCreated !== secondCreated) return secondCreated - firstCreated;
+    }
+
+    if (firstTier === 1) {
+      const firstRatio = getSlaRemainingRatio(first, now) ?? 1;
+      const secondRatio = getSlaRemainingRatio(second, now) ?? 1;
+      if (firstRatio !== secondRatio) return firstRatio - secondRatio;
+    }
+
+    if (firstTier === 2) {
       const firstCreated = Date.parse(first.createdAt ?? "") || 0;
       const secondCreated = Date.parse(second.createdAt ?? "") || 0;
       if (firstCreated !== secondCreated) return secondCreated - firstCreated;
@@ -169,15 +244,20 @@ export function sortIncidentsForTable(
         (firstResolution === undefined ? -1 : firstResolution ?? 0)
       );
     }
+
     const firstDeadline = isIncidentActive(first)
       ? deadlineFor(first)
       : Infinity;
     const secondDeadline = isIncidentActive(second)
       ? deadlineFor(second)
       : Infinity;
-    return firstDeadline === secondDeadline
-      ? 0
-      : firstDeadline - secondDeadline;
+    if (firstDeadline !== secondDeadline) {
+      return firstDeadline - secondDeadline;
+    }
+
+    const firstCreated = Date.parse(first.createdAt ?? "") || 0;
+    const secondCreated = Date.parse(second.createdAt ?? "") || 0;
+    return secondCreated - firstCreated;
   });
 }
 
@@ -213,10 +293,10 @@ function computeSlaProgress(
   const ratio = Math.min(1, Math.max(0, elapsed / totalWindow));
   const percent = Math.round(ratio * 100);
 
-  if (now >= deadline || percent >= 85) {
-    return { percent: 100, barClass: "bg-mts-red" };
+  if (now >= deadline || percent >= 75) {
+    return { percent: Math.min(100, Math.max(75, percent)), barClass: "bg-mts-red" };
   }
-  if (percent >= 65) {
+  if (percent >= 60) {
     return { percent, barClass: "bg-mts-amber" };
   }
   return { percent: Math.max(6, percent), barClass: "bg-mts-emerald" };
@@ -268,7 +348,7 @@ function ContextBadges({
 
   return (
     <div
-      className={cn("flex flex-wrap gap-1", compact ? "mt-1.5" : "mt-2")}
+      className={cn("flex flex-wrap gap-1", compact ? "mt-2" : "mt-2")}
       aria-label="Атрибуты инцидента"
     >
       {badges.map(({ label, className }) => (
@@ -321,11 +401,16 @@ function SlaTimer({
 
   const liveSla = currentSlaStatus(incident, now);
   const seconds = Math.ceil((deadline - now) / 1000);
+  const belowQuarter = isSlaBelowQuarter(incident, now);
   const emphasis = cn(
     "whitespace-nowrap font-semibold tabular-nums",
-    (seconds <= 0 || liveSla === "breached" || isActiveCritical(incident)) &&
+    (seconds <= 0 ||
+      liveSla === "breached" ||
+      belowQuarter ||
+      isActiveCritical(incident)) &&
       "text-mts-crimson",
     seconds > 0 &&
+      !belowQuarter &&
       !isActiveCritical(incident) &&
       (liveSla === "critical" || liveSla === "warning") &&
       "text-mts-amber",
@@ -559,7 +644,7 @@ function AssigneeCell({
     : "";
 
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-2">
       {employee ? (
         <div>
           <p className="font-medium text-foreground">{employee}</p>
@@ -573,7 +658,7 @@ function AssigneeCell({
             <Button
               type="button"
               variant="outline"
-              className="h-8 rounded-control border-mts-red/40 bg-card px-2.5 text-label-sm font-medium text-mts-crimson hover:bg-mts-red hover:text-white"
+              className="h-8 rounded-control border-mts-red/40 bg-card px-2.5 text-label-sm font-medium text-mts-crimson transition-all duration-200 hover:bg-mts-red hover:text-white active:scale-[0.98]"
               onClick={(event) => onAssign(incident.id, event)}
             >
               <UserPlus className="size-3.5" aria-hidden="true" />
@@ -613,24 +698,27 @@ function IncidentCard({
   return (
     <article
       className={cn(
-        "space-y-4 rounded-panel border bg-card p-4 transition duration-200 hover:shadow-[0_4px_16px_rgba(29,32,35,0.08)] motion-safe:hover:-translate-y-1 motion-reduce:transition-none",
-        criticalActive &&
-          "critical-pulse-ring border-l-4 border-l-mts-red bg-mts-red/[0.02]",
+        "space-y-4 rounded-panel border bg-card p-6 transition-all duration-200 hover:shadow-[0_4px_16px_rgba(29,32,35,0.08)] motion-safe:hover:-translate-y-1 motion-reduce:transition-none",
+        criticalActive && "border-l-4 border-l-mts-red bg-mts-red/[0.02]",
         !criticalActive && isResolved && "border-l-4 border-l-mts-emerald",
       )}
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="flex items-center gap-2 text-label-sm text-muted-foreground">
+            <span className={cn(criticalActive && "font-semibold text-mts-crimson")}>
+              {incident.id}
+            </span>
             {criticalActive && (
-              <span
-                aria-hidden="true"
-                className="critical-dot-pulse size-2 shrink-0 rounded-pill bg-mts-red"
-              />
+              <Badge
+                variant="outline"
+                className="rounded-pill border-mts-red/40 bg-mts-red/10 px-2 py-0 text-[11px] font-bold text-mts-crimson"
+              >
+                Закреплён
+              </Badge>
             )}
-            {incident.id}
           </p>
-          <h4 className="font-sans text-body-md font-semibold wrap-break-word">
+          <h4 className="mt-1 font-sans text-body-md font-semibold wrap-break-word">
             {incident.product}
           </h4>
           <ContextBadges incident={incident} compact />
@@ -714,7 +802,10 @@ export function IncidentViews({
   onPageChange: (nextPage: number) => void;
 }) {
   const tableWrapperRef = useRef<HTMLDivElement | null>(null);
+  const tbodyRef = useRef<HTMLTableSectionElement | null>(null);
+  const prevRowTopsRef = useRef(new Map<string, number>());
   const [autoAssignId, setAutoAssignId] = useState<string | null>(null);
+  const [dismissedWaitingIds, setDismissedWaitingIds] = useState<string[]>([]);
   const resolvedAt = selected ? criticalResolutions.get(selected.id) : undefined;
   void isManualProcess;
 
@@ -727,6 +818,93 @@ export function IncidentViews({
     setAutoAssignId(id);
     onOpenDetails(id, event);
   };
+
+  const sorted = useMemo(
+    () => sortIncidentsForTable(incidents, criticalResolutions, now),
+    [incidents, criticalResolutions, now],
+  );
+
+  const idleWaitingIncidents = useMemo(() => {
+    if (now === null) return [];
+    const dismissed = new Set(dismissedWaitingIds);
+    return sorted.filter((incident) => {
+      if (dismissed.has(incident.id)) return false;
+      if (incident.status !== "waiting" && incident.status !== "new") {
+        return false;
+      }
+      if (hasAssignedEmployee(incident)) return false;
+      const createdMs = Date.parse(incident.createdAt ?? "");
+      if (!Number.isFinite(createdMs)) return true;
+      return now - createdMs >= IDLE_WAITING_MS;
+    });
+  }, [sorted, now, dismissedWaitingIds]);
+
+  const activeWaitingNotice = idleWaitingIncidents[0] ?? null;
+
+  const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+  const safePage = Math.min(Math.max(1, page), totalPages);
+  const startIndex = (safePage - 1) * PAGE_SIZE;
+  const paged = sorted.slice(startIndex, startIndex + PAGE_SIZE);
+  const pagedOrderKey = paged.map((item) => item.id).join("|");
+
+  useLayoutEffect(() => {
+    const tbody = tbodyRef.current;
+    if (!tbody || view !== "table") return;
+
+    const rows = Array.from(
+      tbody.querySelectorAll<HTMLTableRowElement>("tr[data-incident-id]"),
+    );
+    const nextTops = new Map<string, number>();
+    const movedRows: HTMLTableRowElement[] = [];
+    const reduceMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+
+    for (const row of rows) {
+      const id = row.dataset.incidentId;
+      if (!id) continue;
+      const newTop = row.getBoundingClientRect().top;
+      nextTops.set(id, newTop);
+
+      if (!reduceMotion) {
+        const prevTop = prevRowTopsRef.current.get(id);
+        if (prevTop !== undefined) {
+          const deltaY = prevTop - newTop;
+          if (Math.abs(deltaY) > 1) {
+            row.style.transition = "none";
+            row.style.transform = `translateY(${deltaY}px)`;
+            movedRows.push(row);
+          }
+        }
+      }
+    }
+
+    prevRowTopsRef.current = nextTops;
+
+    if (movedRows.length === 0) return;
+
+    void tbody.offsetHeight;
+
+    const frame = window.requestAnimationFrame(() => {
+      for (const row of movedRows) {
+        row.style.transition =
+          "transform 350ms cubic-bezier(0.22, 1, 0.36, 1)";
+        row.style.transform = "translateY(0)";
+      }
+    });
+
+    const cleanupTimer = window.setTimeout(() => {
+      for (const row of movedRows) {
+        row.style.transition = "";
+        row.style.transform = "";
+      }
+    }, 380);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(cleanupTimer);
+    };
+  }, [pagedOrderKey, view]);
 
   const details = (
     <IncidentDetails
@@ -762,10 +940,66 @@ export function IncidentViews({
     />
   );
 
-  const sorted = useMemo(
-    () => sortIncidentsForTable(incidents, criticalResolutions),
-    [incidents, criticalResolutions],
-  );
+  const waitingToast = activeWaitingNotice ? (
+    <aside
+      role="status"
+      aria-live="polite"
+      className="fixed right-4 bottom-4 z-40 w-[calc(100%-2rem)] max-w-md rounded-panel border border-l-4 border-l-mts-amber bg-card p-4 text-card-foreground shadow-[0_4px_16px_rgba(29,32,35,0.08)]"
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="space-y-1">
+          <p className="text-label-md font-bold text-[#B8380E]">
+            Инцидент в ожидании без действий
+          </p>
+          <p className="text-label-md text-foreground">
+            <strong>{activeWaitingNotice.id}</strong> ·{" "}
+            {activeWaitingNotice.product}
+          </p>
+          <p className="text-label-sm text-muted-foreground">
+            Назначьте ответственного исполнителя, проверьте карточку и отправьте
+            инцидент в работу.
+          </p>
+          {idleWaitingIncidents.length > 1 && (
+            <p className="text-label-sm font-semibold text-muted-foreground">
+              Ещё в ожидании без исполнителя: {idleWaitingIncidents.length - 1}
+            </p>
+          )}
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-8 shrink-0"
+          aria-label="Скрыть напоминание об ожидающем инциденте"
+          onClick={() =>
+            setDismissedWaitingIds((prev) => [...prev, activeWaitingNotice.id])
+          }
+        >
+          <X className="size-4" aria-hidden="true" />
+        </Button>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button
+          type="button"
+          className="h-9 rounded-control bg-mts-red px-4 text-label-sm font-bold text-white transition-all duration-200 hover:bg-mts-crimson active:scale-[0.98]"
+          onClick={(event) => {
+            setDismissedWaitingIds((prev) => [...prev, activeWaitingNotice.id]);
+            openDetailsForAssign(activeWaitingNotice.id, event);
+          }}
+        >
+          Назначить и в работу
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          className="h-9 rounded-control px-3 text-label-sm"
+          onClick={(event) => openDetailsOnly(activeWaitingNotice.id, event)}
+        >
+          Посмотреть
+        </Button>
+      </div>
+    </aside>
+  ) : null;
 
   function scrollTable(direction: "left" | "right") {
     const outer = tableWrapperRef.current;
@@ -788,15 +1022,12 @@ export function IncidentViews({
       );
     }
 
-    const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
-    const safePage = Math.min(Math.max(1, page), totalPages);
-    const startIndex = (safePage - 1) * PAGE_SIZE;
-    const paged = sorted.slice(startIndex, startIndex + PAGE_SIZE);
     const pageNumbers = buildPageNumbers(safePage, totalPages);
 
     return (
       <>
         {details}
+        {waitingToast}
 
         <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
           <p className="text-label-sm text-muted-foreground">
@@ -860,10 +1091,11 @@ export function IncidentViews({
                 ))}
               </TableRow>
             </TableHeader>
-            <TableBody key={safePage} className="animate-table-page">
+            <TableBody ref={tbodyRef}>
               {paged.map((incident) => {
                 const rowResolvedAt = criticalResolutions.get(incident.id);
                 const criticalActive = isActiveCritical(incident);
+                const urgentSla = isSlaBelowQuarter(incident, now);
                 const isResolved =
                   rowResolvedAt !== undefined || incident.status === "resolved";
 
@@ -871,9 +1103,11 @@ export function IncidentViews({
                   <TableRow
                     key={incident.id}
                     id={`incident-row-${incident.id}`}
+                    data-incident-id={incident.id}
                     className={cn(
-                      "scroll-mt-24",
-                      criticalActive && "critical-row-pulse",
+                      "scroll-mt-24 transition-colors duration-200",
+                      criticalActive && "bg-mts-red/[0.05]",
+                      !criticalActive && urgentSla && "bg-mts-amber/[0.04]",
                       incident.id === highlightedIncidentId && "bg-mts-red/15",
                     )}
                   >
@@ -884,19 +1118,25 @@ export function IncidentViews({
                         criticalActive &&
                           "border-l-4 border-l-mts-red font-semibold text-mts-crimson",
                         !criticalActive &&
+                          urgentSla &&
+                          "border-l-4 border-l-mts-amber",
+                        !criticalActive &&
+                          !urgentSla &&
                           isResolved &&
                           "border-l-4 border-l-mts-emerald",
                       )}
                     >
-                      <span className="inline-flex items-center gap-2">
+                      <div className="flex flex-col items-start gap-1">
+                        <span>{incident.id}</span>
                         {criticalActive && (
-                          <span
-                            aria-hidden="true"
-                            className="critical-dot-pulse size-2 shrink-0 rounded-pill bg-mts-red"
-                          />
+                          <Badge
+                            variant="outline"
+                            className="rounded-pill border-mts-red/40 bg-mts-red/10 px-2 py-0 text-[10px] font-bold text-mts-crimson"
+                          >
+                            Закреплён
+                          </Badge>
                         )}
-                        {incident.id}
-                      </span>
+                      </div>
                     </th>
                     <TableCell className="max-w-[200px] px-3 py-3 font-medium whitespace-normal">
                       <div>{incident.product}</div>
@@ -1031,6 +1271,7 @@ export function IncidentViews({
   return (
     <>
       {details}
+      {waitingToast}
       <div className="mt-4 grid gap-4 lg:grid-cols-2 lg:gap-6">
         {visibleGroups.map(({ id, title, marker }) => {
           const members = sorted.filter((incident) =>

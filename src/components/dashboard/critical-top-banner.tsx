@@ -1,5 +1,6 @@
-import { AlertTriangle, ArrowDown } from "lucide-react";
+import { ArrowDown } from "lucide-react";
 
+import { Badge } from "@/components/ui/badge";
 import { deadlineFor, type DashboardIncident } from "./dashboard-model";
 import { formatDuration } from "./incident-views";
 
@@ -51,23 +52,18 @@ export function CriticalTopBanner({
   return (
     <section
       aria-labelledby="critical-top-banner-title"
-      className="critical-banner-flash mb-6 rounded-panel border-2 border-mts-red p-4"
+      className="mb-6 rounded-panel border-2 border-mts-red bg-card p-6"
     >
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <h2
           id="critical-top-banner-title"
-          className="flex items-center gap-2 text-title-lg font-bold text-mts-crimson"
+          className="text-title-lg font-medium text-mts-crimson"
         >
-          <span
-            aria-hidden="true"
-            className="critical-dot-pulse size-3 shrink-0 rounded-full bg-mts-red"
-          />
-          <AlertTriangle className="size-5 shrink-0 text-mts-red" aria-hidden="true" />
           Критические инциденты ({incidents.length})
         </h2>
-        <span className="rounded-pill bg-mts-red px-3 py-1 text-label-sm font-semibold text-white">
-          Требует немедленной реакции
-        </span>
+        <Badge className="rounded-pill bg-mts-red px-3 py-1 text-label-sm font-bold text-white">
+          Закреплено · Требует реакции
+        </Badge>
       </div>
 
       <ul className="space-y-2">
@@ -79,18 +75,24 @@ export function CriticalTopBanner({
               <button
                 type="button"
                 onClick={() => onJumpToIncident(incident.id)}
-                className="flex w-full flex-wrap items-center gap-x-4 gap-y-1.5 rounded-control border border-mts-red/30 bg-card/95 px-3.5 py-2.5 text-left transition hover:bg-card focus-visible:outline-2 focus-visible:outline-offset-2"
+                className="flex w-full flex-wrap items-center gap-x-4 gap-y-2 rounded-control border border-border bg-background px-4 py-3 text-left transition-all duration-200 hover:border-mts-red/50 hover:bg-card focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring active:scale-[0.99]"
               >
-                <span className="font-bold text-mts-crimson">{incident.id}</span>
-                <span className="font-semibold text-foreground">{incident.product}</span>
+                <span className="font-semibold text-mts-crimson">
+                  {incident.id}
+                </span>
+                <span className="font-medium text-foreground">
+                  {incident.product}
+                </span>
                 {assignee ? (
-                  <span className="text-label-md text-muted-foreground">{assignee}</span>
+                  <span className="text-label-md text-muted-foreground">
+                    {assignee}
+                  </span>
                 ) : (
-                  <span className="rounded-pill border border-mts-amber/40 bg-mts-amber/12 px-2.5 py-0.5 text-label-sm font-semibold text-[#B8380E]">
+                  <span className="rounded-pill border border-mts-amber/40 bg-mts-amber/12 px-2.5 py-0.5 text-label-sm font-bold text-[#B8380E]">
                     Исполнитель не указан
                   </span>
                 )}
-                <span className="ml-auto whitespace-nowrap font-bold text-mts-crimson tabular-nums">
+                <span className="ml-auto whitespace-nowrap font-semibold text-mts-crimson tabular-nums">
                   {formatSla(incident, now)}
                 </span>
                 <ArrowDown
