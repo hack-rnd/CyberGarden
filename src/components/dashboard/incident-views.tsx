@@ -602,6 +602,7 @@ export function IncidentViews({
   onOpenDetails,
   onEditProcess,
   isManualProcess,
+  selectedIsServerBacked,
   onClose,
   restoreFocus,
   aiControls,
@@ -619,6 +620,7 @@ export function IncidentViews({
   onOpenDetails: OpenDetails;
   onEditProcess?: OpenDetails;
   isManualProcess?: (id: string) => boolean;
+  selectedIsServerBacked?: boolean;
   onClose: () => void;
   restoreFocus: () => void;
   aiControls: AiAnalysisControls;
@@ -633,6 +635,7 @@ export function IncidentViews({
   const details = (
     <IncidentDetails
       incident={selected}
+      serverBacked={selectedIsServerBacked}
       status={
         selected && (
           <IncidentStatus incident={selected} resolvedAt={resolvedAt} />

@@ -42,6 +42,7 @@ import {
 } from "./dashboard-summary";
 import { IncidentAnalytics } from "./incident-analytics";
 import { IncidentArchive, useIncidentArchive } from "./incident-archive";
+import { MtsLink } from "./incident-actions";
 import { CriticalTopBanner } from "./critical-top-banner";
 import {
   IncidentViews,
@@ -609,6 +610,7 @@ export function DashboardWorkspace({
           </h1>
 
           <div className="flex flex-wrap items-center gap-3">
+            <MtsLink events={liveEvents} />
             <IncidentArchive
               entries={archive.entries}
               onRestore={archive.restore}
@@ -947,6 +949,7 @@ export function DashboardWorkspace({
               criticalResolutions={criticalResolutions}
               onArchive={archiveProcess}
               selected={selectedIncident}
+              selectedIsServerBacked={Boolean(sourceIncidents?.some(({ id }) => id === selectedId))}
               onOpenDetails={(id, event) => openDetails(id, event.currentTarget)}
               onEditProcess={(id, event) =>
                 openProcessEditor(event.currentTarget, id)

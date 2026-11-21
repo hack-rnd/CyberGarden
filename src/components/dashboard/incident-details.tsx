@@ -12,6 +12,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 
+import { IncidentAssignment, IncidentHistory } from "./incident-actions";
 import type { DashboardIncident } from "./dashboard-model";
 import { AnalyzeButton, type AiAnalysisControls } from "./dashboard-ai";
 
@@ -123,6 +124,7 @@ function HandoffText({ text }: { text: string }) {
 
 export function IncidentDetails(props: {
   incident?: DashboardIncident;
+  serverBacked?: boolean;
   status?: ReactNode;
   priority?: string;
   created?: ReactNode;
@@ -135,6 +137,7 @@ export function IncidentDetails(props: {
   aiControls: AiAnalysisControls;
 }) {
   const [lastDetails, setLastDetails] = useState(props);
+  const [historyId, setHistoryId] = useState<string>();
   if (props.incident && props !== lastDetails) setLastDetails(props);
 
   const {
@@ -149,6 +152,7 @@ export function IncidentDetails(props: {
     aiControls,
   } = props.incident ? props : lastDetails;
   const { onClose, restoreFocus } = props;
+  const showHistory = Boolean(props.incident && props.serverBacked && historyId === props.incident.id);
   const analysis = incident?.ai;
   const risk = analysis?.riskScore;
   const riskScore =
@@ -161,7 +165,10 @@ export function IncidentDetails(props: {
     <Sheet
       open={Boolean(props.incident)}
       onOpenChange={(open) => {
-        if (!open) onClose();
+        if (!open) {
+          setHistoryId(undefined);
+          onClose();
+        }
       }}
     >
       {incident && (
@@ -191,7 +198,28 @@ export function IncidentDetails(props: {
             </Button>
           </SheetClose>
 
-          <div key={incident.id} className="space-y-6 px-6 pb-6">
+          {props.serverBacked && (
+            <div className="flex gap-2 px-6">
+              <Button
+                type="button"
+                variant={showHistory ? "ghost" : "secondary"}
+                aria-pressed={!showHistory}
+                onClick={() => setHistoryId(undefined)}
+              >
+                Обзор и ИИ
+              </Button>
+              <Button
+                type="button"
+                variant={showHistory ? "secondary" : "ghost"}
+                aria-pressed={showHistory}
+                onClick={() => setHistoryId(incident.id)}
+              >
+                История
+              </Button>
+            </div>
+          )}
+          {showHistory && <div className="px-6 pb-6"><IncidentHistory id={incident.id} /></div>}
+          <div key={incident.id} hidden={showHistory} className="space-y-6 px-6 pb-6">
             <section
               aria-labelledby="incident-details-heading"
               className="space-y-4"
@@ -235,6 +263,7 @@ export function IncidentDetails(props: {
                 </div>
               )}
               {itsm}
+              {props.serverBacked && <IncidentAssignment incident={incident} />}
             </section>
 
             <section
