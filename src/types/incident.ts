@@ -24,7 +24,22 @@ export type DiffEventType =
   | "ASSIGNED_TO_COORDINATORS"
   | "REASSIGNED_OUT"
   | "SLA_OR_PRIORITY_CHANGED"
-  | "INVESTIGATION_ASSIGNED";
+  | "INVESTIGATION_ASSIGNED"
+  | "MTS_LINK_SENT"
+  | "INCIDENT_AUTO_CLOSED"
+  | "SLA_APPROACHING";
+
+export type IncidentHistoryField =
+  | "assignee"
+  | "status"
+  | "sla"
+  | "priority"
+  | "groups"
+  | "created"
+  | "auto_closed"
+  | "mts_link_sent";
+
+export type MtsLinkMessageType = "ASSIGNED" | "AUTO_CLOSED";
 
 // --- AI PAYLOAD ---
 
@@ -52,6 +67,7 @@ export interface NormalizedIncident {
   status: IncidentStatus;
   rawStatus: string;
   assigneeTeam: string;
+  assigneeEmployee?: string | null;
   createdAt: string;
   slaDeadline: string | null;
   slaRemainingMs: number | null;
@@ -68,6 +84,29 @@ export interface NormalizedIncident {
   isDouble?: boolean;
   contentHash: string;
   ai: IncidentAiData | null;
+}
+
+// --- HISTORY & MTS LINK ---
+
+export interface IncidentHistoryItem {
+  id: string;
+  incidentId: string;
+  field: string;
+  oldValue: string | null;
+  newValue: string;
+  actor: string;
+  createdAt: string;
+}
+
+export interface MtsLinkMessageItem {
+  id: string;
+  incidentId: string;
+  recipientName: string;
+  recipientTeam: string;
+  messageType: MtsLinkMessageType;
+  title: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
 }
 
 // --- DASHBOARD AGGREGATES ---

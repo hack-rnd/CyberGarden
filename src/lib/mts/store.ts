@@ -8,7 +8,12 @@ import {
   buildDashboardSummary,
   parseMtsJson,
 } from "@/lib/mts/adapter";
-import { computeIncidentDiff } from "@/lib/mts/diffEngine";
+import { startAutoCloseWorker } from "@/lib/mts/autoClose";
+import {
+  computeExternalHistoryDiff,
+  computeIncidentDiff,
+} from "@/lib/mts/diffEngine";
+import { recordHistoryEntries } from "@/lib/mts/mutations";
 import {
   DiffEvent,
   IncidentAiData,
@@ -36,6 +41,7 @@ class IncidentStore {
   private initialized = false;
   private initPromise: Promise<void> | null = null;
   private emitter = new EventEmitter();
+  private suppressedHistoryUntil = new Map<string, number>();
 
   constructor() {
     this.emitter.setMaxListeners(100);
@@ -49,6 +55,20 @@ class IncidentStore {
   private normalizeRiskLevel(val: string): "low" | "medium" | "high" {
     if (val === "high" || val === "medium" || val === "low") return val;
     return "medium";
+  }
+
+  public suppressExternalHistory(incidentId: string, durationMs = 3000): void {
+    this.suppressedHistoryUntil.set(incidentId, Date.now() + durationMs);
+  }
+
+  private isHistorySuppressed(incidentId: string): boolean {
+    const until = this.suppressedHistoryUntil.get(incidentId);
+    if (!until) return false;
+    if (Date.now() > until) {
+      this.suppressedHistoryUntil.delete(incidentId);
+      return false;
+    }
+    return true;
   }
 
   private async hydrateAiCache(
@@ -109,6 +129,15 @@ class IncidentStore {
     }
   }
 
+  public async emitCustomEvent(event: DiffEvent): Promise<void> {
+    await this.persistEvents([event]);
+    this.lastUpdatedAt = new Date().toISOString();
+    this.emitter.emit("update", {
+      snapshot: this.getSnapshot(),
+      events: [event],
+    } satisfies StreamPayload);
+  }
+
   public async reloadFromDisk(emitDiff: boolean): Promise<void> {
     const filePath = this.getFilePath();
 
@@ -125,12 +154,18 @@ class IncidentStore {
 
     try {
       const rawText = fs.readFileSync(filePath, "utf-8");
-      const rawJson = JSON.parse(rawText);
+      const rawJson: unknown = JSON.parse(rawText);
       const parsed = parseMtsJson(rawJson);
       const hydrated = await this.hydrateAiCache(parsed);
 
       const events = emitDiff
         ? computeIncidentDiff(this.incidents, hydrated)
+        : [];
+
+      const externalHistory = emitDiff
+        ? computeExternalHistoryDiff(this.incidents, hydrated).filter(
+            (entry) => !this.isHistorySuppressed(entry.incidentId)
+          )
         : [];
 
       this.incidents = hydrated;
@@ -140,6 +175,14 @@ class IncidentStore {
 
       if (events.length > 0) {
         await this.persistEvents(events);
+      }
+
+      if (externalHistory.length > 0) {
+        try {
+          await recordHistoryEntries(externalHistory);
+        } catch {
+          // Ignore DB write errors
+        }
       }
 
       if (emitDiff) {
@@ -170,6 +213,7 @@ class IncidentStore {
     this.initPromise = (async () => {
       await this.reloadFromDisk(false);
       this.startWatcher();
+      startAutoCloseWorker(this);
       this.initialized = true;
     })();
 

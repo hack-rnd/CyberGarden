@@ -39,6 +39,8 @@ const RawIncidentSchema = z
     status: z.string().optional(),
     assignedGroupName: z.string().nullable().optional(),
     assignee_team: z.string().nullable().optional(),
+    assignedEmployee: z.string().nullable().optional(),
+    assignee_employee: z.string().nullable().optional(),
     submitDate: z.string().optional(),
     created_at: z.string().optional(),
     deadline: z.string().nullable().optional(),
@@ -253,6 +255,8 @@ export function parseMtsJson(rawData: unknown): NormalizedIncident[] {
     const assigneeTeam =
       (raw.assignedGroupName ?? raw.assignee_team ?? "").trim() ||
       "Не назначена";
+    const assigneeEmployee =
+      (raw.assignedEmployee ?? raw.assignee_employee ?? "").trim() || null;
     const createdAt =
       raw.submitDate ?? raw.created_at ?? new Date().toISOString();
     const slaDeadline = raw.deadline ?? raw.sla_deadline ?? null;
@@ -283,6 +287,7 @@ export function parseMtsJson(rawData: unknown): NormalizedIncident[] {
       status,
       rawStatus,
       assigneeTeam,
+      assigneeEmployee,
       createdAt,
       slaDeadline,
       slaRemainingMs: remainingMs,

@@ -36,3 +36,29 @@ model ChangeEvent {
 
   @@index([createdAt])
 }
+
+model IncidentHistory {
+  id         String   @id @default(cuid())
+  incidentId String
+  field      String
+  oldValue   String?
+  newValue   String
+  actor      String   @default("Координатор")
+  createdAt  DateTime @default(now())
+
+  @@index([incidentId, createdAt])
+}
+
+model MtsLinkMessage {
+  id            String   @id @default(cuid())
+  incidentId    String
+  recipientName String
+  recipientTeam String
+  messageType   String
+  title         String
+  payloadJson   String
+  createdAt     DateTime @default(now())
+
+  @@index([incidentId])
+  @@index([createdAt])
+}
