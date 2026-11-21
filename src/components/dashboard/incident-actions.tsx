@@ -96,7 +96,7 @@ export function MtsLink({ events }: { events?: readonly DiffEvent[] }) {
 
       if (closed.length) {
         setNotice(closed.map((event) =>
-          "Инцидент " + event.incidentCode + " закрыт автоматически.",
+          event.message?.trim() || "Инцидент " + event.incidentCode + " закрыт автоматически.",
         ).join(" "));
       }
     }, 0);

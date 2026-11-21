@@ -1,5 +1,7 @@
+import { useMutation } from "@tanstack/react-query";
 import { Copy, X } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
+import { z } from "zod";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -116,6 +118,148 @@ function HandoffText({ text }: { text: string }) {
         {copyStatus === "manual" &&
           "Текст выделен. Нажмите Ctrl+C или ⌘C, чтобы скопировать."}
       </p>
+    </div>
+  );
+}
+
+const similarSearchResultSchema = z.object({
+  status: z.enum(["matched", "insufficient_data"]),
+  observations: z.array(z.string()),
+  similarIncident: z.object({
+    id: z.string(),
+    code: z.string(),
+    product: z.string(),
+    similarityReason: z.string(),
+    confirmedRootCause: z.string(),
+    resolution: z.string(),
+  }).nullable(),
+  hypothesis: z.string(),
+  firstCheck: z.string(),
+  evidence: z.array(z.string()),
+});
+
+type SimilarSearchResult = z.infer<typeof similarSearchResultSchema>;
+
+async function findSimilarIncident(
+  incident: DashboardIncident,
+  serverBacked: boolean,
+): Promise<SimilarSearchResult> {
+  const { id, code, product, title, description, status, priority, contentHash } = incident;
+  const body = serverBacked
+    ? { incidentId: id }
+    : {
+        incidentId: id,
+        incident: {
+          id,
+          code,
+          product,
+          title,
+          description: description || title,
+          status,
+          priority,
+          contentHash,
+        },
+      };
+
+  const response = await fetch("/api/ai/similar", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    throw new Error("Не удалось найти похожий инцидент. Попробуйте ещё раз.");
+  }
+
+  const result = similarSearchResultSchema.safeParse(await response.json().catch(() => null));
+
+  if (!result.success) {
+    throw new Error("Сервис вернул ответ в неизвестном формате. Попробуйте ещё раз.");
+  }
+
+  return result.data;
+}
+
+function SimilarSearchList({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div className="space-y-2">
+      <h4 className="font-semibold">{title}</h4>
+      {items.length > 0 ? (
+        <ul className="list-disc space-y-2 pl-4">
+          {items.map((item, index) => (
+            <li key={index} className="wrap-break-word">{item}</li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-muted-foreground">Нет данных.</p>
+      )}
+    </div>
+  );
+}
+
+function SimilarIncidentSearch({
+  incident,
+  serverBacked,
+}: {
+  incident: DashboardIncident;
+  serverBacked: boolean;
+}) {
+  const search = useMutation({
+    mutationFn: () => findSimilarIncident(incident, serverBacked),
+    retry: false,
+  });
+  const result = search.data;
+  const similar = result?.similarIncident;
+
+  return (
+    <div className="space-y-4">
+      <Button
+        type="button"
+        variant="outline"
+        className="h-auto min-h-10 rounded-control whitespace-normal"
+        disabled={search.isPending}
+        onClick={() => search.mutate()}
+      >
+        Найти похожий инцидент и проверку
+      </Button>
+      {search.isPending && <p role="status">Ищем похожий инцидент…</p>}
+      {search.isError && <p role="alert">{search.error.message}</p>}
+
+      {result && (
+        <div className="space-y-4 rounded-panel border bg-card p-4 text-card-foreground">
+          <SimilarSearchList title="Что наблюдаем" items={result.observations} />
+          <div className="space-y-2">
+            <h4 className="font-semibold">Похожий случай</h4>
+            {result.status === "matched" && similar && (
+              <div className="space-y-2 rounded-control border bg-background p-3">
+                <p className="font-medium">{similar.code} · {similar.product}</p>
+                <p className="wrap-break-word">{similar.similarityReason}</p>
+                <p className="wrap-break-word">
+                  <strong>Подтверждённая причина:</strong> {similar.confirmedRootCause}
+                </p>
+                <p className="wrap-break-word"><strong>Решение:</strong> {similar.resolution}</p>
+              </div>
+            )}
+            {result.status === "insufficient_data" && (
+              <p className="rounded-control bg-muted p-3 text-muted-foreground">
+                Надёжного совпадения в архиве нет — данных для вывода недостаточно
+              </p>
+            )}
+          </div>
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <h4 className="font-semibold">Гипотеза ИИ</h4>
+              <Badge variant="outline">Гипотеза</Badge>
+            </div>
+            <p className="wrap-break-word">{result.hypothesis}</p>
+          </div>
+          <div className="space-y-2 rounded-control border-l-4 border-l-mts-blue bg-mts-blue/5 p-3">
+            <h4 className="font-semibold">Что проверить первым</h4>
+            <p className="wrap-break-word">{result.firstCheck}</p>
+          </div>
+          <SimilarSearchList title="Основания" items={result.evidence} />
+        </div>
+      )}
     </div>
   );
 }
@@ -309,6 +453,10 @@ export function IncidentDetails(props: {
                 </p>
               )}
               <AnalyzeButton controls={aiControls} incidentId={incident.id} />
+              <SimilarIncidentSearch
+                incident={incident}
+                serverBacked={Boolean(props.serverBacked)}
+              />
               {handoff && <HandoffText key={handoff} text={handoff} />}
             </section>
           </div>
