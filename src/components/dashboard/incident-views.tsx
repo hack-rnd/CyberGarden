@@ -28,7 +28,7 @@ import type { AiAnalysisControls } from "./dashboard-ai";
 
 // --- CONSTANTS ---
 
-const PAGE_SIZE = 10;
+export const PAGE_SIZE = 10;
 
 export const statusLabels: Record<DashboardIncident["status"], string> = {
   new: "Новый",
@@ -606,6 +606,7 @@ export function IncidentViews({
   restoreFocus,
   aiControls,
   page,
+  highlightedIncidentId,
   onPageChange,
 }: {
   incidents: readonly DashboardIncident[];
@@ -622,6 +623,7 @@ export function IncidentViews({
   restoreFocus: () => void;
   aiControls: AiAnalysisControls;
   page: number;
+  highlightedIncidentId?: string;
   onPageChange: (nextPage: number) => void;
 }) {
   const tableWrapperRef = useRef<HTMLDivElement | null>(null);
@@ -765,7 +767,12 @@ export function IncidentViews({
                 return (
                   <TableRow
                     key={incident.id}
-                    className={cn(criticalActive && "critical-row-pulse")}
+                    id={`incident-row-${incident.id}`}
+                    className={cn(
+                      "scroll-mt-24",
+                      criticalActive && "critical-row-pulse",
+                      incident.id === highlightedIncidentId && "bg-mts-red/15",
+                    )}
                   >
                     <th
                       scope="row"

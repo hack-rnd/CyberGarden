@@ -42,7 +42,14 @@ import {
 } from "./dashboard-summary";
 import { IncidentAnalytics } from "./incident-analytics";
 import { IncidentArchive, useIncidentArchive } from "./incident-archive";
-import { IncidentViews, statusLabels, useIncidentClock } from "./incident-views";
+import { CriticalTopBanner } from "./critical-top-banner";
+import {
+  IncidentViews,
+  PAGE_SIZE,
+  sortIncidentsForTable,
+  statusLabels,
+  useIncidentClock,
+} from "./incident-views";
 import { applyIncidentOverrides, toManualIncident } from "@/lib/manual-process";
 import { saveIncidentOverrides } from "@/lib/manual-process-storage";
 import {
@@ -120,6 +127,30 @@ export function DashboardWorkspace({
   const [sla, setSla] = useState("");
   const [view, setView] = useState<(typeof views)[number]["value"]>("table");
   const [page, setPage] = useState(1);
+  const [incidentJump, setIncidentJump] = useState<{ id: string } | null>(null);
+
+  useEffect(() => {
+    if (!incidentJump || view !== "table") return;
+
+    const row = document.getElementById(`incident-row-${incidentJump.id}`);
+    if (!row) return;
+
+    const reduceMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+
+    row.scrollIntoView({
+      behavior: reduceMotion ? "instant" : "smooth",
+      block: "center",
+      inline: "nearest",
+    });
+
+    const timeout = window.setTimeout(() => {
+      setIncidentJump(null);
+    }, 2_500);
+
+    return () => window.clearTimeout(timeout);
+  }, [incidentJump, page, view]);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState("");
   const [uploadingJson, setUploadingJson] = useState(false);
@@ -455,6 +486,27 @@ export function DashboardWorkspace({
       ? tableMatches
       : tableMatches?.filter((incident) => incident.groups.length > 0);
 
+  const criticalIncidents = (visibleIncidents ?? []).filter(
+    (incident) =>
+      isIncidentActive(incident) &&
+      (incident.priority === "critical" || incident.groups.includes("CRITICAL")),
+  );
+
+  function jumpToIncident(id: string) {
+    const orderedIncidents = sortIncidentsForTable(
+      visibleIncidents ?? [],
+      criticalResolutions,
+    );
+    const index = orderedIncidents.findIndex((incident) => incident.id === id);
+
+    if (index === -1) return;
+
+    resetAllFilters();
+    setView("table");
+    setPage(Math.floor(index / PAGE_SIZE) + 1);
+    setIncidentJump({ id });
+  }
+
   const totalVisibleCount = visibleIncidents?.length ?? 0;
 
   async function exportToExcel() {
@@ -507,7 +559,12 @@ export function DashboardWorkspace({
           </div>
 
           <div className="flex shrink-0 items-center gap-1 [&>button]:text-white [&>button:hover]:bg-white/10 [&>button:hover]:text-white">
-            <DashboardAlerts events={liveEvents} onOpen={openDetails} />
+            <DashboardAlerts
+              events={liveEvents}
+              incidents={visibleIncidents ?? []}
+              onJump={jumpToIncident}
+              onOpen={openDetails}
+            />
             <EventFeed
               events={events}
               liveEvents={liveEvents}
@@ -585,6 +642,12 @@ export function DashboardWorkspace({
             устаревшими.
           </p>
         )}
+
+        <CriticalTopBanner
+          incidents={criticalIncidents}
+          now={now}
+          onJumpToIncident={jumpToIncident}
+        />
 
         <DashboardSummary
           metrics={metrics}
@@ -899,6 +962,7 @@ export function DashboardWorkspace({
               }}
               aiControls={ai.analysis}
               page={page}
+              highlightedIncidentId={incidentJump?.id}
               onPageChange={setPage}
             />
           )}

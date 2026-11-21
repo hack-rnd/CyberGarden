@@ -6,9 +6,15 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { DiffEvent } from "@/types/incident";
 
+import { currentSlaStatus, deadlineFor, isIncidentActive, type DashboardIncident } from "../dashboard/dashboard-model";
 import { useIncidentClock } from "../dashboard/incident-views";
 
 const alertTypes = {
+  SLA_APPROACHING: {
+    label: "Подходит срок SLA",
+    tone: [520],
+    border: "border-l-[#EB4A13]",
+  },
   NEW_CRITICAL: {
     label: "Новый критический инцидент",
     tone: [660, 440],
@@ -57,9 +63,13 @@ function playTone(context: AudioContext, frequencies: readonly number[]) {
 
 export function DashboardAlerts({
   events,
+  incidents,
+  onJump,
   onOpen,
 }: {
   events?: readonly DiffEvent[];
+  incidents: readonly DashboardIncident[];
+  onJump: (id: string) => void;
   onOpen: (id: string) => void;
 }) {
   const [enabled, setEnabled] = useState(false);
@@ -69,7 +79,50 @@ export function DashboardAlerts({
   const [dismissed, setDismissed] = useState<string[]>([]);
   const audio = useRef<AudioContext | null>(null);
   const seen = useRef(new Set<string>());
-  const now = useIncidentClock(Boolean(events?.length));
+  const [slaAlerts, setSlaAlerts] = useState<DiffEvent[]>([]);
+  const seenSla = useRef(new Set<string>());
+  const now = useIncidentClock(Boolean(events?.length || incidents.length));
+
+  useEffect(() => {
+    if (now === null) return;
+
+    const timer = window.setTimeout(() => {
+      const fresh: DiffEvent[] = [];
+
+      for (const incident of incidents) {
+        if (!isIncidentActive(incident) || seenSla.current.has(incident.id)) continue;
+        const remaining = deadlineFor(incident) - now;
+        const status = currentSlaStatus(incident, now);
+
+        if (status !== "warning" && status !== "critical" &&
+          !(remaining > 0 && remaining < 15 * 60_000)) continue;
+
+        seenSla.current.add(incident.id);
+        fresh.push({
+          id: "sla:" + incident.id,
+          incidentId: incident.id,
+          incidentCode: incident.code,
+          product: incident.product,
+          type: "SLA_APPROACHING",
+          message: "Подходит срок SLA: " + incident.id + " · " + incident.product,
+          createdAt: new Date(now).toISOString(),
+        });
+      }
+
+      if (fresh.length) {
+        setSlaAlerts((previous) => [...fresh, ...previous.filter(
+          (event) => now - Date.parse(event.createdAt) < visibleForMs,
+        )]);
+      }
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [incidents, now]);
+
+  const alertEvents = [
+    ...slaAlerts.filter((event) => now !== null && now - Date.parse(event.createdAt) < visibleForMs),
+    ...(events ?? []).filter((event) => event.type !== "SLA_APPROACHING"),
+  ];
 
   useEffect(() => () => {
     if (audio.current) void audio.current.close().catch(() => {});
@@ -77,11 +130,11 @@ export function DashboardAlerts({
   }, []);
 
   useEffect(() => {
-    const fresh = events?.filter((event) => !seen.current.has(event.id)) ?? [];
+    const fresh = alertEvents.filter((event) => !seen.current.has(event.id));
     if (!fresh.length) return;
 
     const ids = new Set([...seen.current, ...fresh.map((event) => event.id)]);
-    seen.current = new Set([...ids].slice(-100));
+    seen.current = ids;
 
     const context = audio.current;
     const event = fresh.find(({ type }) => type === "NEW_CRITICAL") ?? fresh.find(getAlert);
@@ -102,13 +155,14 @@ export function DashboardAlerts({
         });
         desktopAlert.onclick = () => {
           window.focus();
-          onOpen(event.incidentId);
+          if (event.type === "SLA_APPROACHING") onJump(event.incidentId);
+          else onOpen(event.incidentId);
           desktopAlert.close();
         };
       } catch {
       }
     }
-  }, [desktopEnabled, enabled, events, onOpen]);
+  });
 
   async function toggleDesktop() {
     if (desktopEnabled) {
@@ -158,7 +212,7 @@ export function DashboardAlerts({
     setDismissed((previous) => [...previous.slice(-49), id]);
   }
 
-  const visible = now === null ? [] : (events ?? []).filter((event) => {
+  const visible = now === null ? [] : alertEvents.filter((event) => {
     const age = now - Date.parse(event.createdAt);
     return getAlert(event) && age >= -1000 && age < visibleForMs
       && !dismissed.includes(event.id);
@@ -236,7 +290,8 @@ export function DashboardAlerts({
                 variant="ghost"
                 className="mt-2"
                 onClick={() => {
-                  onOpen(event.incidentId);
+                  if (event.type === "SLA_APPROACHING") onJump(event.incidentId);
+                  else onOpen(event.incidentId);
                   dismiss(event.id);
                 }}
               >
