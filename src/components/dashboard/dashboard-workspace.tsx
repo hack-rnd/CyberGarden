@@ -202,6 +202,26 @@ export function DashboardWorkspace({
   const [risksOnly, setRisksOnly] = useState(false);
   const [selectedId, setSelectedId] = useState<string>();
   const detailsTrigger = useRef<HTMLElement | null>(null);
+  const handledIncidentLink = useRef<string | undefined>(undefined);
+
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("incident");
+    if (!id || handledIncidentLink.current === id) return;
+
+    const incident = sourceIncidents?.find((item) => item.id === id)
+      ?? sourceIncidents?.find((item) => item.code === id);
+    if (!incident) return;
+
+    const frame = window.requestAnimationFrame(() => {
+      handledIncidentLink.current = id;
+      detailsTrigger.current = document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+      setSelectedId(incident.id);
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [sourceIncidents]);
   const archive = useIncidentArchive();
   const archivedById = new Map(
     archive.entries.map((entry) => [entry.id, entry]),
