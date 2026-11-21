@@ -2110,5 +2110,27 @@
     "eliminationTypeId": null,
     "receivingChannel": "Мониторинг 9го королевства",
     "solution": "Запасной Экран счётчика установлен, система работает штатно."
+  },
+  {
+    "sysId": "999000111222333444",
+    "id": "INC000099990001",
+    "submitDate": "2026-11-21T03:06:36.411Z",
+    "deadline": "2026-11-21T03:31:36.411Z",
+    "state": "Завершен",
+    "stateEnum": "Resolved",
+    "stateId": 7,
+    "priorityId": 4,
+    "priority": "Наивысший",
+    "urgencyId": 4,
+    "impactId": 4,
+    "productName": "Автопросматриватель TicTok",
+    "service": "[Автопросматриватель TicTok] Процессор видео",
+    "header": "Полная недоступность кластера обработки видео",
+    "description": "Массовый отказ узлов обработки видеопотока. Срочно требуется координация и эскалация.",
+    "assignedGroupName": "КЦ ИТ Координаторы Массовых Инцидентов",
+    "productUrl": null,
+    "completionDate": "2026-11-21T03:06:43.115Z",
+    "solution": "Кластер перезапущен, трафик восстановлен.",
+    "lastAssignmentToTeamDateTime": "2026-11-21T03:06:42.146Z"
   }
 ]

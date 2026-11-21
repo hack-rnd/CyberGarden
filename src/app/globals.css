@@ -25,13 +25,15 @@
   --radius-pill: 9999px;
 
   --color-mts-red: #FF0032;
+  --color-mts-crimson: #D9002B;
+  --color-mts-wine: #8F001C;
   --color-mts-blue: #007CFF;
-  --color-mts-emerald: #00C19B;
+  --color-mts-emerald: #00A887;
   --color-mts-amber: #EB4A13;
-  --color-mts-surface: #F2F3F7;
-  --color-mts-border: #E2E5EB;
+  --color-mts-surface: #F4F5F8;
+  --color-mts-border: #DFE3E8;
   --color-mts-ink: #1D2023;
-  --color-mts-muted: #626C77;
+  --color-mts-muted: #5C6570;
 
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -72,7 +74,7 @@
 }
 
 :root {
-  --background: #F2F3F7;
+  --background: #F4F5F8;
   --foreground: #1D2023;
   --card: #FFFFFF;
   --card-foreground: #1D2023;
@@ -80,63 +82,29 @@
   --popover-foreground: #1D2023;
   --primary: #FF0032;
   --primary-foreground: #FFFFFF;
-  --secondary: #F2F3F7;
+  --secondary: #ECEEF2;
   --secondary-foreground: #1D2023;
-  --muted: #F2F3F7;
-  --muted-foreground: #626C77;
-  --accent: #F2F3F7;
+  --muted: #ECEEF2;
+  --muted-foreground: #5C6570;
+  --accent: #ECEEF2;
   --accent-foreground: #1D2023;
-  --destructive: #FF0032;
-  --border: #E2E5EB;
-  --input: #E2E5EB;
+  --destructive: #D9002B;
+  --border: #DFE3E8;
+  --input: #D5DBE2;
   --ring: #007CFF;
   --chart-1: #FF0032;
   --chart-2: #007CFF;
-  --chart-3: #00C19B;
+  --chart-3: #00A887;
   --chart-4: #EB4A13;
-  --chart-5: #626C77;
+  --chart-5: #5C6570;
   --radius: 0.75rem;
   --sidebar: #FFFFFF;
   --sidebar-foreground: #1D2023;
   --sidebar-primary: #FF0032;
   --sidebar-primary-foreground: #FFFFFF;
-  --sidebar-accent: #F2F3F7;
+  --sidebar-accent: #F4F5F8;
   --sidebar-accent-foreground: #1D2023;
-  --sidebar-border: #E2E5EB;
-  --sidebar-ring: #007CFF;
-}
-
-.dark {
-  --background: #1D2023;
-  --foreground: #FFFFFF;
-  --card: #262A2E;
-  --card-foreground: #FFFFFF;
-  --popover: #262A2E;
-  --popover-foreground: #FFFFFF;
-  --primary: #FF0032;
-  --primary-foreground: #FFFFFF;
-  --secondary: #31363B;
-  --secondary-foreground: #FFFFFF;
-  --muted: #31363B;
-  --muted-foreground: #9BA3AE;
-  --accent: #31363B;
-  --accent-foreground: #FFFFFF;
-  --destructive: #FF0032;
-  --border: #383E45;
-  --input: #383E45;
-  --ring: #007CFF;
-  --chart-1: #FF0032;
-  --chart-2: #007CFF;
-  --chart-3: #00C19B;
-  --chart-4: #EB4A13;
-  --chart-5: #9BA3AE;
-  --sidebar: #262A2E;
-  --sidebar-foreground: #FFFFFF;
-  --sidebar-primary: #FF0032;
-  --sidebar-primary-foreground: #FFFFFF;
-  --sidebar-accent: #31363B;
-  --sidebar-accent-foreground: #FFFFFF;
-  --sidebar-border: #383E45;
+  --sidebar-border: #DFE3E8;
   --sidebar-ring: #007CFF;
 }
 
@@ -149,5 +117,75 @@
   }
   h1, h2, h3, h4 {
     @apply font-heading font-medium;
+  }
+}
+
+@keyframes critical-card-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 1.5px #FF0032, 0 0 0 0 rgba(255, 0, 50, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 2px #D9002B, 0 0 0 6px rgba(255, 0, 50, 0);
+  }
+}
+
+@keyframes critical-row-pulse {
+  0%, 100% {
+    background-color: rgba(255, 0, 50, 0.05);
+    outline-color: rgba(255, 0, 50, 0.85);
+  }
+  50% {
+    background-color: rgba(255, 0, 50, 0.14);
+    outline-color: rgba(217, 0, 43, 0.35);
+  }
+}
+
+@keyframes critical-dot-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.45);
+    opacity: 0.45;
+  }
+}
+
+@keyframes table-page-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.critical-pulse-ring {
+  border-color: #FF0032 !important;
+  animation: critical-card-pulse 1.6s ease-in-out infinite;
+}
+
+.critical-row-pulse {
+  outline: 2px solid #FF0032;
+  outline-offset: -2px;
+  animation: critical-row-pulse 1.6s ease-in-out infinite;
+}
+
+.critical-dot-pulse {
+  animation: critical-dot-pulse 1.4s ease-in-out infinite;
+}
+
+.animate-table-page {
+  animation: table-page-in 0.25s ease-in-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .critical-pulse-ring,
+  .critical-row-pulse,
+  .critical-dot-pulse,
+  .animate-table-page {
+    animation: none;
   }
 }

@@ -12,7 +12,15 @@ import {
   YAxis,
 } from "recharts";
 
-import { currentSlaStatus, deadlineFor, isIncidentActive, type DashboardIncident, type IncidentTimelineEvent } from "./dashboard-model";
+import {
+  currentSlaStatus,
+  deadlineFor,
+  isIncidentActive,
+  type DashboardIncident,
+  type IncidentTimelineEvent,
+} from "./dashboard-model";
+
+// --- CONSTANTS ---
 
 const minute = 60_000;
 const hour = 60 * minute;
@@ -36,7 +44,32 @@ type AnalyticsProps = {
   events?: readonly IncidentTimelineEvent[];
 };
 
-function summarizeActivity({ incidents, events }: AnalyticsProps, end: number) {
+// --- AGGREGATION ---
+
+function resolveEffectiveEnd(
+  { incidents, events }: AnalyticsProps,
+  fallbackEnd: number,
+) {
+  let latest = fallbackEnd;
+
+  for (const incident of incidents ?? []) {
+    const time = Date.parse(incident.createdAt ?? "");
+    if (Number.isFinite(time) && time > latest) latest = time;
+  }
+
+  for (const event of events ?? []) {
+    const time = Date.parse(event.createdAt ?? "");
+    if (Number.isFinite(time) && time > latest) latest = time;
+  }
+
+  return latest;
+}
+
+function summarizeActivity(
+  { incidents, events }: AnalyticsProps,
+  fallbackEnd: number,
+) {
+  const end = resolveEffectiveEnd({ incidents, events }, fallbackEnd);
   const start = end - 24 * hour;
   const buckets = Array.from({ length: 24 }, (_, index) => ({
     start: start + index * hour,
@@ -48,7 +81,10 @@ function summarizeActivity({ incidents, events }: AnalyticsProps, end: number) {
     const time = Date.parse(timestamp ?? "");
     if (!Number.isFinite(time) || time < start || time > end) return;
 
-    const index = Math.min(Math.floor((time - start) / hour), buckets.length - 1);
+    const index = Math.min(
+      Math.floor((time - start) / hour),
+      buckets.length - 1,
+    );
     buckets[index][series]++;
   }
 
@@ -71,7 +107,9 @@ function summarizeActivity({ incidents, events }: AnalyticsProps, end: number) {
   let overdueSla = 0;
 
   for (const incident of incidents ?? []) {
-    if (!isIncidentActive(incident) || !Number.isFinite(deadlineFor(incident))) continue;
+    if (!isIncidentActive(incident) || !Number.isFinite(deadlineFor(incident))) {
+      continue;
+    }
 
     trackedSla++;
     if (currentSlaStatus(incident, end) === "breached") {
@@ -81,6 +119,8 @@ function summarizeActivity({ incidents, events }: AnalyticsProps, end: number) {
 
   return { buckets, trackedSla, overdueSla };
 }
+
+// --- CHART ---
 
 function ActivityChart({ incidents, events }: AnalyticsProps) {
   const [end, setEnd] = useState(() => Date.now());
@@ -116,26 +156,34 @@ function ActivityChart({ incidents, events }: AnalyticsProps) {
       <ul className="flex flex-wrap gap-x-6 gap-y-2 text-label-md">
         {showCreated && (
           <li className="flex items-center gap-2">
-            <span aria-hidden="true" className="size-2 rounded-full bg-mts-blue" />
+            <span
+              aria-hidden="true"
+              className="size-2 rounded-full bg-mts-red"
+            />
             Создано: <strong>{totalCreated}</strong>
           </li>
         )}
         {showResolved && (
           <li className="flex items-center gap-2">
-            <span aria-hidden="true" className="size-2 rounded-full bg-mts-emerald" />
+            <span
+              aria-hidden="true"
+              className="size-2 rounded-full bg-mts-emerald"
+            />
             Критических решено: <strong>{totalResolved}</strong>
           </li>
         )}
         {activity.trackedSla > 0 && (
           <li>
             Просрочено SLA сейчас:{" "}
-            <strong>{activity.overdueSla} из {activity.trackedSla}</strong>
+            <strong className="text-mts-crimson">
+              {activity.overdueSla} из {activity.trackedSla}
+            </strong>
           </li>
         )}
       </ul>
 
       {showCreated || showResolved ? (
-        <div className="h-60 min-w-0 sm:h-64">
+        <div className="h-56 min-w-0 sm:h-60">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart
               data={activity.buckets}
@@ -153,27 +201,30 @@ function ActivityChart({ incidents, events }: AnalyticsProps) {
                 tickLine={false}
               />
               <YAxis
-                width={40}
+                width={36}
                 allowDecimals={false}
                 domain={[0, (max: number) => Math.max(1, max)]}
                 tick={{ fill: "var(--muted-foreground)", fontSize: 12 }}
                 tickLine={false}
               />
               <Tooltip
-                labelFormatter={(value) => `${tooltipFormat.format(Number(value))} МСК`}
+                labelFormatter={(value) =>
+                  `${tooltipFormat.format(Number(value))} МСК`
+                }
                 contentStyle={{
                   backgroundColor: "var(--card)",
                   color: "var(--foreground)",
                   borderColor: "var(--border)",
+                  borderRadius: "8px",
                 }}
                 isAnimationActive={false}
               />
               {showCreated && (
                 <Line
-                  type="linear"
+                  type="monotone"
                   dataKey="created"
                   name="Создано"
-                  stroke="var(--color-mts-blue)"
+                  stroke="var(--color-mts-red)"
                   strokeWidth={2}
                   dot={false}
                   isAnimationActive={false}
@@ -181,7 +232,7 @@ function ActivityChart({ incidents, events }: AnalyticsProps) {
               )}
               {showResolved && (
                 <Line
-                  type="linear"
+                  type="monotone"
                   dataKey="resolved"
                   name="Критических решено"
                   stroke="var(--color-mts-emerald)"
@@ -209,16 +260,19 @@ function ActivityChart({ incidents, events }: AnalyticsProps) {
   );
 }
 
+// --- ACCORDION WRAPPER ---
+
 export const IncidentAnalytics = memo(function IncidentAnalytics({
   incidents,
   events,
 }: AnalyticsProps) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true);
 
   return (
     <section
+      id="analytics-section"
       aria-labelledby="analytics-title"
-      className="mt-8 min-w-0 rounded-panel border bg-card"
+      className="mt-6 min-w-0 scroll-mt-20 rounded-panel border bg-card"
     >
       <h2 id="analytics-title" className="text-title-lg">
         <button
@@ -226,7 +280,7 @@ export const IncidentAnalytics = memo(function IncidentAnalytics({
           aria-expanded={expanded}
           aria-controls="incident-analytics-content"
           onClick={() => setExpanded((open) => !open)}
-          className="flex w-full items-center justify-between gap-4 rounded-panel px-4 py-4 text-left hover:bg-muted active:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:px-6"
+          className="flex w-full cursor-pointer items-center justify-between gap-4 rounded-panel px-4 py-4 text-left hover:bg-muted/60 active:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:px-6"
         >
           Аналитика за 24 часа
           <ChevronDown
@@ -239,15 +293,14 @@ export const IncidentAnalytics = memo(function IncidentAnalytics({
       </h2>
 
       <div id="incident-analytics-content" hidden={!expanded}>
-        {expanded && (
-          incidents !== undefined || events !== undefined ? (
+        {expanded &&
+          (incidents !== undefined || events !== undefined ? (
             <ActivityChart incidents={incidents} events={events} />
           ) : (
             <p className="px-6 pb-6 text-muted-foreground">
               Ожидаем подключения данных.
             </p>
-          )
-        )}
+          ))}
       </div>
     </section>
   );
