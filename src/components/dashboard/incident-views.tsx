@@ -28,7 +28,7 @@ import type { AiAnalysisControls } from "./dashboard-ai";
 
 // --- CONSTANTS ---
 
-const PAGE_SIZE = 10;
+export const PAGE_SIZE = 10;
 
 export const statusLabels: Record<DashboardIncident["status"], string> = {
   new: "Новый",
@@ -602,10 +602,12 @@ export function IncidentViews({
   onOpenDetails,
   onEditProcess,
   isManualProcess,
+  selectedIsServerBacked,
   onClose,
   restoreFocus,
   aiControls,
   page,
+  highlightedIncidentId,
   onPageChange,
 }: {
   incidents: readonly DashboardIncident[];
@@ -618,10 +620,12 @@ export function IncidentViews({
   onOpenDetails: OpenDetails;
   onEditProcess?: OpenDetails;
   isManualProcess?: (id: string) => boolean;
+  selectedIsServerBacked?: boolean;
   onClose: () => void;
   restoreFocus: () => void;
   aiControls: AiAnalysisControls;
   page: number;
+  highlightedIncidentId?: string;
   onPageChange: (nextPage: number) => void;
 }) {
   const tableWrapperRef = useRef<HTMLDivElement | null>(null);
@@ -631,6 +635,7 @@ export function IncidentViews({
   const details = (
     <IncidentDetails
       incident={selected}
+      serverBacked={selectedIsServerBacked}
       status={
         selected && (
           <IncidentStatus incident={selected} resolvedAt={resolvedAt} />
@@ -765,7 +770,12 @@ export function IncidentViews({
                 return (
                   <TableRow
                     key={incident.id}
-                    className={cn(criticalActive && "critical-row-pulse")}
+                    id={`incident-row-${incident.id}`}
+                    className={cn(
+                      "scroll-mt-24",
+                      criticalActive && "critical-row-pulse",
+                      incident.id === highlightedIncidentId && "bg-mts-red/15",
+                    )}
                   >
                     <th
                       scope="row"
