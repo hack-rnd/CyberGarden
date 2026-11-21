@@ -5,6 +5,9 @@ import { canRunDemo, runDemo } from "../../scripts/demo/runDemo"
 import { seenAlerts } from "./alertKinds"
 import { formatAlert } from "./formatAlert"
 import { followStream } from "./sse"
+import { createEntry, registerCreateWizard } from "./createWizard"
+import { createIncidentApi } from "./incidentApi"
+import { registerIncidentActions } from "./interactiveBot"
 
 function telegramId(value: string | undefined): number | undefined {
   if (!value || !/^-?\d+$/.test(value)) return undefined
@@ -21,8 +24,20 @@ async function main() {
   if (chat === undefined) throw new Error("Проверьте TELEGRAM_CHAT_ID в .env.")
 
   const recipient = chat
-  const streamUrl = new URL(process.env.MTS_SSE_URL || "http://localhost:3000/api/stream")
+  const apiUrl = new URL(process.env.MTS_API_URL || "http://localhost:3000")
+  const streamUrl = new URL(process.env.MTS_SSE_URL || "/api/stream", apiUrl)
+  const configuredAppUrl = new URL(process.env.PUBLIC_APP_URL || "http://localhost:3000")
+  const appUrl = ["https:", "http:"].includes(configuredAppUrl.protocol) &&
+    !configuredAppUrl.username && !configuredAppUrl.password
+    ? configuredAppUrl
+    : new URL("http://localhost:3000")
   const bot = new Bot(token)
+  const api = createIncidentApi(apiUrl)
+  const criticalKeyboard = registerIncidentActions(bot, api, appUrl, recipient, (ctx) =>
+    admin !== undefined && admin > 0 && ctx.from?.id === admin &&
+    (ctx.chat?.type === "private" || ctx.chat?.id === recipient),
+  )
+  registerCreateWizard(bot, api, (ctx) => allowed(ctx.from?.id, ctx.chat?.type))
   const sender = new Api(token, { timeoutSeconds: 8 })
   const controller = new AbortController()
   const signal = controller.signal
@@ -38,7 +53,9 @@ async function main() {
   }
 
   bot.command("start", async (ctx) => {
-    await ctx.reply("Бот оповещений. /ids — ID чата и пользователя. /test — проверка доставки. /demo — демо-пульт.")
+    await ctx.reply("Бот оповещений. /ids — ID чата и пользователя. /test — проверка доставки. /demo — демо-пульт. /new — создать демо-инцидент.", {
+      reply_markup: allowed(ctx.from?.id, ctx.chat.type) ? createEntry : undefined,
+    })
   })
   bot.command("ids", async (ctx) => {
     await ctx.reply(ctx.chat.type === "private"
@@ -82,11 +99,11 @@ async function main() {
   })
   bot.catch(({ error }) => console.error("Ошибка команды Telegram.", error instanceof GrammyError ? error.error_code : ""))
 
-  async function sendAlert(text: string, url?: string): Promise<boolean> {
+  async function sendAlert(text: string, keyboard?: InlineKeyboard): Promise<boolean> {
     for (let attempt = 0; attempt < 3 && !signal.aborted; attempt++) {
       try {
         await sender.sendMessage(recipient, text, {
-          reply_markup: url ? new InlineKeyboard().url("Открыть в ITSM", url) : undefined,
+          reply_markup: keyboard,
           link_preview_options: { is_disabled: true },
         })
         return true
@@ -120,7 +137,10 @@ async function main() {
           for (const event of events) {
             if (alreadySeen.has(event.id)) continue
             const alert = formatAlert(event, incidents, process.env.ITSM_URL_TEMPLATE)
-            if (await sendAlert(alert.text, alert.url)) alreadySeen.add(event.id)
+            const keyboard = event.type === "NEW_CRITICAL"
+              ? criticalKeyboard(event.incidentId)
+              : alert.url ? new InlineKeyboard().url("Открыть в ITSM", alert.url) : undefined
+            if (await sendAlert(alert.text, keyboard)) alreadySeen.add(event.id)
           }
         })
       },
