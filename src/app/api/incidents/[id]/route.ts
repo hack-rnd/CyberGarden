@@ -78,7 +78,11 @@ export async function PATCH(
     rawItem.stateId === 10 ||
     String(rawItem.stateEnum ?? "").toLowerCase() === "closed";
 
-  if (isClosed && patch.status && patch.status !== "closed") {
+  const triesToReopen =
+    (patch.status !== undefined && patch.status !== "closed") ||
+    Boolean(patch.groups?.includes("INVESTIGATION"));
+
+  if (isClosed && triesToReopen) {
     return NextResponse.json(
       { error: "Закрытый инцидент нельзя вернуть в работу" },
       { status: 409 }
