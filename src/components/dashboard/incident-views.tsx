@@ -644,7 +644,7 @@ export function IncidentViews({
                         "px-3 py-3 text-left font-medium whitespace-nowrap",
                         criticalActive &&
                           "border-l-4 border-l-mts-red font-semibold text-mts-crimson",
-                        rowResolvedAt !== undefined &&
+                        (rowResolvedAt !== undefined || incident.status === "resolved") &&
                           "border-l-4 border-l-mts-emerald",
                       )}
                     >

@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState, useSyncExternalStore, type FormEvent } from "react";
+import { useId, useMemo, useState, useSyncExternalStore, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetClose, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 
 import { manualProcessFields, type ProcessFields } from "@/lib/manual-process";
@@ -31,6 +32,82 @@ const moscowTime = new Intl.DateTimeFormat("sv-SE", {
 });
 const fieldClass = "grid gap-2 text-label-md font-medium";
 const controlClass = "min-h-10 w-full rounded-control border bg-background px-3 py-2 font-normal focus-visible:outline-2 focus-visible:outline-ring";
+const selectTriggerClass = "h-12 w-full rounded-control border-input bg-card text-label-md hover:border-mts-muted";
+const selectContentClass = "max-h-[min(18rem,var(--radix-select-content-available-height))] w-(--radix-select-trigger-width) min-w-0 rounded-panel border-border bg-card shadow-[0_4px_16px_rgba(29,32,35,0.08)]";
+
+type ProcessCatalog = {
+  products: readonly string[];
+  assignees: readonly string[];
+};
+
+function catalogMatch(value: string, options: readonly string[]) {
+  const typed = value.toLocaleLowerCase("ru");
+  return options.find((option) => option.trim() === value)
+    ?? options.find((option) => option.trim().toLocaleLowerCase("ru") === typed);
+}
+
+function CatalogField({ label, name, value, options, required }: {
+  label: string;
+  name: "product" | "assigneeTeam";
+  value?: string;
+  options: readonly string[];
+  required?: boolean;
+}) {
+  const id = useId();
+
+  return (
+    <label className={fieldClass}>
+      {label}
+      <Input
+        name={name}
+        list={id}
+        autoComplete="off"
+        required={required}
+        defaultValue={value}
+        placeholder="Введите название или выберите из списка"
+        className="h-12 rounded-control border-input bg-card"
+      />
+      <datalist id={id}>
+        {options.map((option) => <option key={option} value={option} />)}
+      </datalist>
+    </label>
+  );
+}
+
+function ProcessSelect({ label, name, value, options }: {
+  label: string;
+  name: "status" | "priority";
+  value: string;
+  options: Readonly<Record<string, string>>;
+}) {
+  const id = useId();
+
+  return (
+    <div className={fieldClass}>
+      <label htmlFor={id}>{label}</label>
+      <Select name={name} defaultValue={value}>
+        <SelectTrigger id={id} className={selectTriggerClass}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent
+          position="popper"
+          side="bottom"
+          align="start"
+          collisionPadding={8}
+          className={selectContentClass}
+        >
+          <SelectGroup>
+            {Object.entries(options).map(([value, label]) => (
+              <SelectItem key={value} value={value} className="whitespace-normal">
+                {label}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
 
 function subscribe(notify: () => void) {
   window.addEventListener("storage", notify);
@@ -73,13 +150,13 @@ export function useManualProcesses() {
 }
 
 export function ManualProcessEditor({
-  editor, onClose, onSave, restoreFocus,
+  editor, products, assignees, onClose, onSave, restoreFocus,
 }: {
   editor: ProcessEditorState | null;
   onClose: () => void;
   onSave: (fields: ProcessFields, id?: string) => void;
   restoreFocus: () => void;
-}) {
+} & ProcessCatalog) {
   const [lastEditor, setLastEditor] = useState(editor);
   if (editor && editor !== lastEditor) setLastEditor(editor);
   const displayedEditor = editor ?? lastEditor;
@@ -92,19 +169,27 @@ export function ManualProcessEditor({
         showCloseButton={false}
       >
         <SheetHeader className="p-6 pb-0">
-          <SheetTitle>{displayedEditor?.process ? "Редактировать процесс" : "Добавить процесс"}</SheetTitle>
+          <SheetTitle>{displayedEditor?.process ? "Редактировать инцидент" : "Добавить инцидент"}</SheetTitle>
           <SheetDescription>Процесс сохраняется в этом браузере.</SheetDescription>
         </SheetHeader>
-        {displayedEditor && <ProcessForm key={displayedEditor.process?.id ?? "new"} process={displayedEditor.process} onSave={onSave} />}
+        {displayedEditor && (
+          <ProcessForm
+            key={displayedEditor.process?.id ?? "new"}
+            process={displayedEditor.process}
+            products={products}
+            assignees={assignees}
+            onSave={onSave}
+          />
+        )}
       </SheetContent>
     </Sheet>
   );
 }
 
-function ProcessForm({ process, onSave }: {
+function ProcessForm({ process, products, assignees, onSave }: {
   process?: ProcessEditorState["process"];
   onSave: (fields: ProcessFields, id?: string) => void;
-}) {
+} & ProcessCatalog) {
   const [error, setError] = useState("");
   const initialDeadline = process?.slaDeadline
     ? moscowTime.format(new Date(process.slaDeadline)).replace(" ", "T")
@@ -113,6 +198,17 @@ function ProcessForm({ process, onSave }: {
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
+    const product = catalogMatch(String(data.get("product") ?? "").trim(), products);
+    if (!product) {
+      setError("Выберите существующий продукт из списка.");
+      return;
+    }
+    const typedAssignee = String(data.get("assigneeTeam") ?? "").trim();
+    const assignee = typedAssignee ? catalogMatch(typedAssignee, assignees) : "";
+    if (assignee === undefined) {
+      setError("Выберите существующего исполнителя из списка или оставьте поле пустым.");
+      return;
+    }
     const deadline = data.get("slaDeadline");
     const timestamp = typeof deadline === "string" && deadline ? Date.parse(`${deadline}:00+03:00`) : null;
     if (timestamp !== null && !Number.isFinite(timestamp)) {
@@ -120,9 +216,9 @@ function ProcessForm({ process, onSave }: {
       return;
     }
     const result = manualProcessFields.safeParse({
-      product: data.get("product"),
+      product,
       description: data.get("description"),
-      assigneeTeam: data.get("assigneeTeam"),
+      assigneeTeam: assignee,
       priority: data.get("priority"),
       status: data.get("status"),
       groups: data.getAll("groups"),
@@ -146,35 +242,19 @@ function ProcessForm({ process, onSave }: {
 
   return (
     <form onSubmit={submit} className="space-y-4 px-6 pb-6">
-      <label className={fieldClass}>
-        Название процесса / продукт
-        <Input name="product" required maxLength={120} defaultValue={process?.product} className="h-10" />
-      </label>
+      <CatalogField label="Продукт" name="product" value={process?.product} options={products} required />
       <label className={fieldClass}>
         Описание
         <textarea name="description" maxLength={3000} rows={3} defaultValue={process?.description} className={controlClass} />
       </label>
-      <label className={fieldClass}>
-        Исполнитель
-        <Input name="assigneeTeam" maxLength={120} defaultValue={process?.assigneeTeam} className="h-10" />
-      </label>
+      <CatalogField label="Исполнитель" name="assigneeTeam" value={process?.assigneeTeam} options={assignees} />
       <label className={fieldClass}>
         Ссылка на запись ITSM (необязательно)
         <Input type="url" name="itsmUrl" maxLength={2048} defaultValue={process?.itsmUrl} placeholder="https://…" className="h-10" />
       </label>
       <div className="grid gap-4 sm:grid-cols-2">
-        <label className={fieldClass}>
-          Статус
-          <select name="status" defaultValue={process?.status ?? "new"} className={controlClass}>
-            {Object.entries(statusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-          </select>
-        </label>
-        <label className={fieldClass}>
-          Приоритет
-          <select name="priority" defaultValue={process?.priority ?? "medium"} className={controlClass}>
-            {Object.entries(priorityLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-          </select>
-        </label>
+        <ProcessSelect label="Статус" name="status" value={process?.status ?? "new"} options={statusLabels} />
+        <ProcessSelect label="Приоритет" name="priority" value={process?.priority ?? "medium"} options={priorityLabels} />
       </div>
       <fieldset className="space-y-2 rounded-control border p-3">
         <legend className="px-1 text-label-md font-medium">Группы</legend>

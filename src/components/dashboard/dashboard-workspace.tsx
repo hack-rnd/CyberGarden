@@ -1,8 +1,8 @@
 "use client";
 
-import { ArrowDown, BarChart3, Download, Plus, Search, X } from "lucide-react";
+import { Archive, ArrowDown, BarChart3, Download, Plus, Search, X } from "lucide-react";
 import Image from "next/image";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { DashboardAlerts } from "@/components/alerts/dashboard-alerts";
 import { Button } from "@/components/ui/button";
@@ -32,7 +32,7 @@ import {
 } from "./dashboard-summary";
 import { IncidentAnalytics } from "./incident-analytics";
 import { IncidentArchive, useIncidentArchive } from "./incident-archive";
-import { IncidentViews, useIncidentClock } from "./incident-views";
+import { IncidentViews, statusLabels, useIncidentClock } from "./incident-views";
 import { applyIncidentOverrides, toManualIncident } from "@/lib/manual-process";
 import { saveIncidentOverrides } from "@/lib/manual-process-storage";
 import { ManualProcessEditor, useManualProcesses, type ProcessEditorState } from "./manual-processes";
@@ -68,6 +68,25 @@ function filterOptions(values: (string | undefined)[]) {
   ].sort((first, second) => first.localeCompare(second, "ru"));
 }
 
+function MtsBadge({ className }: { className: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={`isolate block shrink-0 overflow-hidden rounded-[22%] bg-[#fe0031] shadow-sm ${className}`}
+    >
+      <Image
+        src="/mts-logo.png"
+        alt=""
+        width={40}
+        height={40}
+        unoptimized
+        className="block size-full scale-105 object-cover"
+        style={{ clipPath: "polygon(0 0, 100% 0, 100% 100%, 60% 100%, 60% 75%, 0 75%)" }}
+      />
+    </span>
+  );
+}
+
 // --- WORKSPACE ---
 
 export function DashboardWorkspace({
@@ -81,11 +100,13 @@ export function DashboardWorkspace({
   const [query, setQuery] = useState("");
   const [service, setService] = useState("");
   const [team, setTeam] = useState("");
+  const [incidentStatus, setIncidentStatus] = useState(ALL_VALUE);
   const [sla, setSla] = useState("");
   const [view, setView] = useState<(typeof views)[number]["value"]>("table");
   const [page, setPage] = useState(1);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState("");
+  const [archiveNotice, setArchiveNotice] = useState<{ code: string } | null>(null);
   const [processEditor, setProcessEditor] = useState<ProcessEditorState | null>(null);
   const processTrigger = useRef<HTMLElement | null>(null);
   const { processes, overrides, save: saveProcess } = useManualProcesses();
@@ -94,6 +115,15 @@ export function DashboardWorkspace({
   const incidents = processes.length
     ? [...(feedIncidents ?? []), ...processes.map((process) => toManualIncident(process))]
     : feedIncidents;
+  const catalog = [...(sourceIncidents ?? []), ...(incidents ?? [])];
+  const productOptions = filterOptions(catalog.map(({ product }) => product));
+  const assigneeOptions = filterOptions(catalog.map(({ assigneeTeam }) => assigneeTeam));
+
+  useEffect(() => {
+    if (!archiveNotice) return;
+    const timeout = window.setTimeout(() => setArchiveNotice(null), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [archiveNotice]);
 
   const [selectedGroup, setSelectedGroup] = useState<IncidentGroupId | null>(
     null,
@@ -167,6 +197,7 @@ export function DashboardWorkspace({
     const incident = incidents?.find((entry) => entry.id === id);
     if (incident) {
       archive.archive(incident);
+      setArchiveNotice({ code: incident.code || incident.id });
       document.getElementById("incident-list-title")?.focus({ preventScroll: true });
     }
   }
@@ -193,6 +224,7 @@ export function DashboardWorkspace({
       setSelectedGroup(null);
       setService("");
       setTeam("");
+      setIncidentStatus(ALL_VALUE);
       setSla("");
       setQuery("");
       setView("table");
@@ -209,6 +241,7 @@ export function DashboardWorkspace({
     setQuery("");
     setService("");
     setTeam("");
+    setIncidentStatus(ALL_VALUE);
     setSla("");
     setSelectedGroup(null);
     setRisksOnly(false);
@@ -247,6 +280,7 @@ export function DashboardWorkspace({
     search ||
       activeService ||
       activeTeam ||
+      incidentStatus !== ALL_VALUE ||
       sla ||
       selectedGroup ||
       showRisksOnly,
@@ -286,6 +320,7 @@ export function DashboardWorkspace({
         )) &&
       (!activeService || incident.product === activeService) &&
       (!activeTeam || incident.assigneeTeam === activeTeam) &&
+      (incidentStatus === ALL_VALUE || incident.status === incidentStatus) &&
       (!sla || currentSlaStatus(incident, now) === sla) &&
       (!selectedGroup || incident.groups.includes(selectedGroup)) &&
       (!showRisksOnly || incident.ai?.riskLevel === "high"),
@@ -318,38 +353,33 @@ export function DashboardWorkspace({
   return (
     <>
       <header className="fixed inset-x-0 top-0 z-10 border-b border-white/10 bg-mts-ink text-white">
-        <div className="mx-auto flex h-16 max-w-7xl items-center gap-2 px-6 sm:gap-4 lg:grid lg:grid-cols-[minmax(0,1fr)_min(40%,28rem)_minmax(0,1fr)] lg:px-12">
+        <div className="mx-auto flex h-16 max-w-7xl items-center gap-2 px-6 sm:gap-4 lg:px-12">
           <span className="flex shrink-0 items-center gap-2.5 text-label-md font-bold tracking-wide text-white">
-            <Image
-              src="/mts-logo.png"
-              alt=""
-              width={28}
-              height={28}
-              unoptimized
-              className="size-7 rounded-sm object-cover"
-            />
+            <MtsBadge className="size-8 sm:size-9" />
             МТС <span className="hidden text-white/80 sm:inline">True Tech</span>
           </span>
 
-          <div className="relative min-w-0 flex-1">
-            <Search
-              aria-hidden="true"
-              className="pointer-events-none absolute top-3.5 left-3.5 size-4 text-white/50"
-            />
-            <Input
-              type="search"
-              aria-label="Поиск по ID, продукту и описанию"
-              placeholder="Поиск по ID, продукту, описанию"
-              value={query}
-              onChange={(event) => {
-                setQuery(event.target.value);
-                setPage(1);
-              }}
-              className="h-10 rounded-control border-white/15 bg-white/10 pr-3 pl-10 text-white placeholder:text-white/55 hover:border-white/30 focus-visible:bg-white/15"
-            />
+          <div className="flex min-w-0 flex-1 justify-center">
+            <div className="relative w-full max-w-md">
+              <Search
+                aria-hidden="true"
+                className="pointer-events-none absolute top-3.5 left-3.5 size-4 text-white/50"
+              />
+              <Input
+                type="search"
+                aria-label="Поиск по ID, продукту и описанию"
+                placeholder="Поиск по ID, продукту, описанию"
+                value={query}
+                onChange={(event) => {
+                  setQuery(event.target.value);
+                  setPage(1);
+                }}
+                className="h-10 rounded-control border-white/15 bg-white/10 pr-3 pl-10 text-white placeholder:text-white/55 hover:border-white/30 focus-visible:bg-white/15"
+              />
+            </div>
           </div>
 
-          <div className="ml-auto flex items-center gap-1 lg:ml-0 lg:justify-self-center [&>button]:text-white [&>button:hover]:bg-white/10 [&>button:hover]:text-white">
+          <div className="flex shrink-0 items-center gap-1 [&>button]:text-white [&>button:hover]:bg-white/10 [&>button:hover]:text-white">
             <DashboardAlerts events={liveEvents} onOpen={openDetails} />
             <EventFeed
               events={events}
@@ -361,14 +391,29 @@ export function DashboardWorkspace({
         </div>
       </header>
 
-      <Image
-        src="/mts-logo.png"
-        alt=""
-        width={36}
-        height={36}
-        unoptimized
-        className="pointer-events-none fixed bottom-4 left-2 z-10 size-6 rounded-sm object-cover sm:left-4 sm:size-9"
-      />
+      <div role="status" className="sr-only">
+        {archiveNotice && `Инцидент ${archiveNotice.code} скрыт в архив.`}
+      </div>
+      {archiveNotice && (
+        <div className="fixed right-4 bottom-4 z-40 flex max-w-[calc(100%-2rem)] items-center gap-3 rounded-panel border border-l-4 border-l-mts-emerald bg-card p-3 text-card-foreground shadow-lg motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-2">
+          <Archive className="size-5 shrink-0 text-mts-emerald" aria-hidden="true" />
+          <p className="wrap-break-word text-label-md">
+            Инцидент <strong>{archiveNotice.code}</strong> скрыт в архив.
+          </p>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="ml-auto shrink-0"
+            aria-label="Закрыть уведомление об архивации"
+            onClick={() => setArchiveNotice(null)}
+          >
+            <X aria-hidden="true" />
+          </Button>
+        </div>
+      )}
+
+      <MtsBadge className="pointer-events-none fixed bottom-4 left-2 z-10 size-7 sm:left-4 sm:size-9" />
 
       <main className="mx-auto w-full max-w-7xl px-6 pt-24 pb-12 lg:px-12">
         <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
@@ -483,7 +528,7 @@ export function DashboardWorkspace({
                 onClick={(event) => openProcessEditor(event.currentTarget)}
               >
                 <Plus aria-hidden="true" />
-                Добавить процесс
+                Добавить инцидент
               </Button>
               {hasAnyFilter && (
                 <Button
@@ -516,9 +561,9 @@ export function DashboardWorkspace({
 
           <div
             aria-label="Фильтры и вид списка"
-            className="mt-4 grid grid-cols-12 gap-4 rounded-panel border bg-background p-4 lg:gap-6"
+            className="mt-4 grid grid-cols-1 gap-4 rounded-panel border bg-background p-4 sm:grid-cols-2 lg:grid-cols-3 lg:gap-6 xl:grid-cols-5"
           >
-            <div className="col-span-12 grid min-w-0 gap-2 sm:col-span-6 lg:col-span-3">
+            <div className="grid min-w-0 gap-2">
               <span className="text-label-md font-medium">Продукт</span>
               <Select
                 value={activeService || ALL_VALUE}
@@ -544,7 +589,7 @@ export function DashboardWorkspace({
               </Select>
             </div>
 
-            <div className="col-span-12 grid min-w-0 gap-2 sm:col-span-6 lg:col-span-3">
+            <div className="grid min-w-0 gap-2">
               <span className="text-label-md font-medium">Команда</span>
               <Select
                 value={activeTeam || ALL_VALUE}
@@ -570,7 +615,32 @@ export function DashboardWorkspace({
               </Select>
             </div>
 
-            <div className="col-span-12 grid min-w-0 gap-2 sm:col-span-6 lg:col-span-3">
+            <div className="grid min-w-0 gap-2">
+              <label htmlFor="incident-status-filter" className="text-label-md font-medium">
+                Статус инцидента
+              </label>
+              <Select
+                value={incidentStatus}
+                onValueChange={(value) => {
+                  setIncidentStatus(value);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger id="incident-status-filter" className="h-12 w-full rounded-control border-input bg-card text-label-md hover:border-mts-muted">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="max-h-72 rounded-panel border-border bg-card shadow-[0_4px_16px_rgba(29,32,35,0.08)]">
+                  <SelectGroup>
+                    <SelectItem value={ALL_VALUE}>Все статусы</SelectItem>
+                    {Object.entries(statusLabels).map(([value, label]) => (
+                      <SelectItem key={value} value={value}>{label}</SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid min-w-0 gap-2">
               <span className="text-label-md font-medium">Статус SLA</span>
               <Select
                 value={sla || ALL_VALUE}
@@ -595,7 +665,7 @@ export function DashboardWorkspace({
               </Select>
             </div>
 
-            <fieldset className="col-span-12 min-w-0 sm:col-span-6 lg:col-span-3">
+            <fieldset className="min-w-0">
               <legend className="mb-2 text-label-md font-medium">
                 Вид списка
               </legend>
@@ -650,6 +720,8 @@ export function DashboardWorkspace({
         </section>
         <ManualProcessEditor
           editor={processEditor}
+          products={productOptions}
+          assignees={assigneeOptions}
           onClose={() => setProcessEditor(null)}
           restoreFocus={() => {
             if (processTrigger.current?.isConnected) processTrigger.current.focus();
