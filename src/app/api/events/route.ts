@@ -13,7 +13,7 @@ export async function GET() {
   try {
     const rows = await prisma.changeEvent.findMany({
       orderBy: { createdAt: "desc" },
-      take: 50,
+      take: 200,
     });
 
     const events: DiffEvent[] = rows.map((row) => ({
