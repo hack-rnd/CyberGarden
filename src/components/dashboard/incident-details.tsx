@@ -13,6 +13,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { useManualIncidentHistory } from "@/lib/manual-process-history";
 import { cn } from "@/lib/utils";
 
 import {
@@ -24,6 +25,48 @@ import type { DashboardIncident } from "./dashboard-model";
 import { AnalyzeButton, type AiAnalysisControls } from "./dashboard-ai";
 
 // --- HELPERS ---
+
+const manualHistoryTime = new Intl.DateTimeFormat("ru-RU", {
+  timeZone: "Europe/Moscow",
+  dateStyle: "short",
+  timeStyle: "medium",
+});
+
+const manualHistoryFieldLabels: Record<string, string> = {
+  created: "Создание",
+  status: "Статус",
+  priority: "Приоритет",
+  assignee: "Исполнитель",
+  product: "Продукт",
+  sla: "SLA",
+  groups: "Группы",
+  description: "Описание",
+};
+
+function ManualIncidentHistory({ id }: { id: string }) {
+  const history = useManualIncidentHistory(id);
+
+  if (!history.length) {
+    return <p className="text-muted-foreground">Изменений пока нет.</p>;
+  }
+
+  return (
+    <ol className="space-y-4 border-l pl-4">
+      {history.map((item) => (
+        <li key={item.id} className="space-y-1">
+          <strong>{manualHistoryFieldLabels[item.field] ?? item.field}</strong>
+          <p className="text-label-sm text-muted-foreground">
+            {manualHistoryTime.format(new Date(item.createdAt))} МСК ·{" "}
+            {item.actor}
+          </p>
+          <p className="text-label-md wrap-break-word">
+            {item.oldValue ?? "—"} → {item.newValue}
+          </p>
+        </li>
+      ))}
+    </ol>
+  );
+}
 
 function DetailField({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -128,7 +171,9 @@ function RiskProgressBar({ score }: { score: number }) {
 }
 
 function HandoffText({ text }: { text: string }) {
-  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "manual">("idle");
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "manual">(
+    "idle",
+  );
   const textarea = useRef<HTMLTextAreaElement>(null);
 
   async function copyHandoff() {
@@ -362,7 +407,7 @@ export function IncidentDetails(props: {
   } = props.incident ? props : lastDetails;
   const { onClose, onAssigned, restoreFocus } = props;
   const showHistory = Boolean(
-    props.incident && props.serverBacked && historyId === props.incident.id,
+    props.incident && historyId === props.incident.id,
   );
   const analysis = incident?.ai;
   const risk = analysis?.riskScore;
@@ -410,31 +455,35 @@ export function IncidentDetails(props: {
             </Button>
           </SheetClose>
 
-          {props.serverBacked && (
-            <div className="flex gap-2 px-6">
-              <Button
-                type="button"
-                variant={showHistory ? "ghost" : "secondary"}
-                aria-pressed={!showHistory}
-                onClick={() => setHistoryId(undefined)}
-              >
-                Обзор и ИИ
-              </Button>
-              <Button
-                type="button"
-                variant={showHistory ? "secondary" : "ghost"}
-                aria-pressed={showHistory}
-                onClick={() => setHistoryId(incident.id)}
-              >
-                История
-              </Button>
-            </div>
-          )}
+          <div className="flex gap-2 px-6">
+            <Button
+              type="button"
+              variant={showHistory ? "ghost" : "secondary"}
+              aria-pressed={!showHistory}
+              onClick={() => setHistoryId(undefined)}
+            >
+              Обзор и ИИ
+            </Button>
+            <Button
+              type="button"
+              variant={showHistory ? "secondary" : "ghost"}
+              aria-pressed={showHistory}
+              onClick={() => setHistoryId(incident.id)}
+            >
+              История
+            </Button>
+          </div>
+
           {showHistory && (
             <div className="px-6 pb-6">
-              <IncidentHistory id={incident.id} />
+              {props.serverBacked ? (
+                <IncidentHistory id={incident.id} />
+              ) : (
+                <ManualIncidentHistory id={incident.id} />
+              )}
             </div>
           )}
+
           <div
             key={incident.id}
             hidden={showHistory}

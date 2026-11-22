@@ -31,6 +31,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { syncManualIncidentHistory } from "@/lib/manual-process-history";
 import { cn } from "@/lib/utils";
 import type { DiffEvent } from "@/types/incident";
 import {
@@ -71,6 +72,7 @@ import {
 
 const ALL_VALUE = "__all__";
 const MONITOR_FRESH_WINDOW_MS = 24 * 60 * 60_000;
+const HANDOFF_SLA_LIMIT = 8;
 
 const slaLabels = {
   ok: "В норме",
@@ -301,7 +303,121 @@ function MonitorIncidentRow({
     </li>
   );
 }
+function buildShiftHandoffReport(params: {
+  visibleIncidents: readonly DashboardIncident[];
+  criticalIncidents: readonly DashboardIncident[];
+  unassignedCount: number;
+  serviceHealthItems: readonly {
+    product: string;
+    level: "critical" | "degraded" | "ok";
+    count: number;
+  }[];
+  now: number | null;
+}): string {
+  const {
+    visibleIncidents,
+    criticalIncidents,
+    unassignedCount,
+    serviceHealthItems,
+    now,
+  } = params;
+  const refNow = now ?? Date.now();
 
+  const activeAll = visibleIncidents.filter(
+    (item) => item.status !== "closed" && item.status !== "resolved",
+  );
+  const activeWork = activeAll.filter(
+    (item) => item.status !== "investigation",
+  );
+  const rcaCount = activeAll.length - activeWork.length;
+  const coordQueue = activeAll.filter((item) =>
+    item.groups.includes("ASSIGNED_TO_COORDINATORS"),
+  );
+
+  const burningSla = activeWork
+    .filter((item) => currentSlaStatus(item, refNow) !== "ok")
+    .sort((a, b) => {
+      const aStatus = currentSlaStatus(a, refNow);
+      const bStatus = currentSlaStatus(b, refNow);
+      const rank = {
+        breached: 0,
+        critical: 1,
+        warning: 2,
+        ok: 3,
+        completed: 4,
+      };
+      if (rank[aStatus] !== rank[bStatus]) {
+        return rank[aStatus] - rank[bStatus];
+      }
+      return deadlineFor(a) - deadlineFor(b);
+    });
+
+  const breachedCount = burningSla.filter(
+    (item) => currentSlaStatus(item, refNow) === "breached",
+  ).length;
+
+  const degradedServices = serviceHealthItems.filter(
+    (item) => item.level !== "ok",
+  );
+
+  const lines: string[] = [
+    `СВОДКА ПЕРЕДАЧИ СМЕНЫ МТС · ${handoffTimeFormat.format(new Date(refNow))} МСК`,
+    `Активных: ${activeAll.length} (${activeWork.length} в работе или ожидании, ${rcaCount} на RCA) | Критических: ${criticalIncidents.length} | На координаторах: ${coordQueue.length} | Без исполнителя: ${unassignedCount} | Риск/просрочка SLA: ${burningSla.length} (просрочено: ${breachedCount})`,
+    "",
+  ];
+
+  if (criticalIncidents.length > 0) {
+    lines.push(`КРИТИЧЕСКИЕ ИНЦИДЕНТЫ (${criticalIncidents.length}):`);
+    for (const item of criticalIncidents) {
+      lines.push(
+        `- ${item.id} · ${item.product} · ${item.assigneeEmployee || "Исполнитель не указан"} · SLA: ${formatMonitorSla(item, refNow)}`,
+      );
+    }
+    lines.push("");
+  }
+
+  if (coordQueue.length > 0) {
+    lines.push(`НА КООРДИНАТОРАХ (ТРЕБУЮТ ПЕРЕДАЧИ, ${coordQueue.length}):`);
+    for (const item of coordQueue) {
+      lines.push(
+        `- ${item.id} · ${item.product} (${statusLabels[item.status]}) · ${item.assigneeEmployee || "Без исполнителя"}`,
+      );
+    }
+    lines.push("");
+  }
+
+  if (burningSla.length > 0) {
+    const slaHeading =
+      burningSla.length > HANDOFF_SLA_LIMIT
+        ? `ГОРЯЩИЕ / ПРОСРОЧЕННЫЕ SLA (показано ${HANDOFF_SLA_LIMIT} из ${burningSla.length}, приоритет — просроченные):`
+        : `ГОРЯЩИЕ / ПРОСРОЧЕННЫЕ SLA (${burningSla.length}):`;
+    lines.push(slaHeading);
+    for (const item of burningSla.slice(0, HANDOFF_SLA_LIMIT)) {
+      lines.push(
+        `- ${item.id} · ${item.product} · SLA: ${formatMonitorSla(item, refNow)}`,
+      );
+    }
+    if (burningSla.length > HANDOFF_SLA_LIMIT) {
+      lines.push(
+        `… и ещё ${burningSla.length - HANDOFF_SLA_LIMIT} инцид. с риском или просрочкой SLA.`,
+      );
+    }
+    lines.push("");
+  }
+
+  if (degradedServices.length > 0) {
+    lines.push(
+      `ПРОБЛЕМНЫЕ IT-СЕРВИСЫ (в работе/ожидании, без RCA — всего ${activeWork.length}):`,
+    );
+    for (const svc of degradedServices) {
+      lines.push(
+        `- ${svc.product}: ${svc.level === "critical" ? "Сбой" : "Деградация"} (${svc.count} в работе/ожидании)`,
+      );
+    }
+  }
+
+  return lines.join("\n").trim();
+}
 // --- WORKSPACE ---
 
 export function DashboardWorkspace({
@@ -318,6 +434,7 @@ export function DashboardWorkspace({
   const [incidentStatus, setIncidentStatus] = useState(ALL_VALUE);
   const [sla, setSla] = useState("");
   const [showClosed, setShowClosed] = useState(false);
+  const [suppressClosedInSearch, setSuppressClosedInSearch] = useState(false);
   const [unassignedOnly, setUnassignedOnly] = useState(false);
   const [monitorMode, setMonitorMode] = useState(false);
   const [handoffCopied, setHandoffCopied] = useState(false);
@@ -374,6 +491,14 @@ export function DashboardWorkspace({
   );
   const processTrigger = useRef<HTMLElement | null>(null);
   const { processes, overrides, save: saveProcess } = useManualProcesses();
+
+  useEffect(() => {
+    if (!processes.length) return;
+    syncManualIncidentHistory(
+      processes.map((process) => toManualIncident(process)),
+    );
+  }, [processes]);
+
   const manualById = new Map(processes.map((process) => [process.id, process]));
   const feedIncidents = sourceIncidents?.map((incident) =>
     applyIncidentOverrides(incident, overrides.get(incident.id)),
@@ -546,6 +671,7 @@ export function DashboardWorkspace({
       setSla("");
       setQuery("");
       setUnassignedOnly(false);
+      setSuppressClosedInSearch(false);
       setView("table");
       setRisksOnly(true);
       setPage(1);
@@ -565,6 +691,8 @@ export function DashboardWorkspace({
     setSelectedGroup(null);
     setRisksOnly(false);
     setUnassignedOnly(false);
+    setShowClosed(false);
+    setSuppressClosedInSearch(false);
     setPage(1);
   }
 
@@ -600,21 +728,11 @@ export function DashboardWorkspace({
         return;
       }
 
-      const formData = new FormData();
-      formData.append("file", file);
-
-      let response = await fetch("/api/upload-json", {
+      const response = await fetch("/api/upload-json", {
         method: "POST",
-        body: formData,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(parsed),
       });
-
-      if (!response.ok && (response.status === 400 || response.status === 415)) {
-        response = await fetch("/api/upload-json", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(parsed),
-        });
-      }
 
       const body = (await response.json().catch(() => ({}))) as {
         error?: string;
@@ -687,7 +805,9 @@ export function DashboardWorkspace({
     (incident) => incident.status === "closed",
   ).length;
   const includeClosed =
-    showClosed || incidentStatus === "closed" || Boolean(search);
+    showClosed ||
+    incidentStatus === "closed" ||
+    (Boolean(search) && !suppressClosedInSearch);
 
   const hasRiskAssessments =
     visibleIncidents?.some(
@@ -710,7 +830,8 @@ export function DashboardWorkspace({
       sla ||
       selectedGroup ||
       showRisksOnly ||
-      unassignedOnly,
+      unassignedOnly ||
+      showClosed,
   );
 
   const metrics =
@@ -772,6 +893,7 @@ export function DashboardWorkspace({
     view === "table"
       ? tableMatches
       : tableMatches?.filter((incident) => incident.groups.length > 0);
+  const filteredTableCount = tableMatches?.length ?? 0;
 
   const criticalIncidents = (visibleIncidents ?? []).filter(
     (incident) =>
@@ -853,15 +975,29 @@ export function DashboardWorkspace({
     openDetails(id);
   }
 
+  function handleToggleClosed() {
+    if (includeClosed) {
+      setShowClosed(false);
+      if (incidentStatus === "closed") {
+        setIncidentStatus(ALL_VALUE);
+      }
+      if (search) {
+        setSuppressClosedInSearch(true);
+      }
+    } else {
+      setShowClosed(true);
+      setSuppressClosedInSearch(false);
+    }
+    setPage(1);
+  }
+
   function jumpToIncident(id: string) {
     const target = (visibleIncidents ?? []).find((item) => item.id === id);
     if (!target) return;
 
     const targetIsClosed = target.status === "closed";
-    if (targetIsClosed) setShowClosed(true);
-
     const pool = (visibleIncidents ?? []).filter(
-      (item) => targetIsClosed || showClosed || item.status !== "closed",
+      (item) => targetIsClosed || item.status !== "closed",
     );
     const orderedIncidents = sortIncidentsForTable(
       pool,
@@ -872,77 +1008,20 @@ export function DashboardWorkspace({
     if (index === -1) return;
 
     resetAllFilters();
+    if (targetIsClosed) setShowClosed(true);
     setView("table");
     setPage(Math.floor(index / PAGE_SIZE) + 1);
     setIncidentJump({ id });
   }
 
-  const totalVisibleCount = (visibleIncidents ?? []).filter(
-    (incident) => includeClosed || incident.status !== "closed",
-  ).length;
-
   async function copyShiftHandoff() {
-    const activeAll = (visibleIncidents ?? []).filter(
-      (item) => item.status !== "closed" && item.status !== "resolved",
-    );
-    const coordQueue = activeAll.filter((item) =>
-      item.groups.includes("ASSIGNED_TO_COORDINATORS"),
-    );
-    const burningSla = activeAll.filter(
-      (item) =>
-        item.status !== "investigation" &&
-        currentSlaStatus(item, now) !== "ok",
-    );
-    const degradedServices = serviceHealthItems.filter(
-      (item) => item.level !== "ok",
-    );
-
-    const lines: string[] = [
-      `СВОДКА ПЕРЕДАЧИ СМЕНЫ МТС · ${handoffTimeFormat.format(new Date())} МСК`,
-      `Активных: ${activeAll.length} | Критических: ${criticalIncidents.length} | На координаторах: ${coordQueue.length} | Без исполнителя: ${unassignedCount} | Риск/просрочка SLA: ${burningSla.length}`,
-      "",
-    ];
-
-    if (criticalIncidents.length > 0) {
-      lines.push("КРИТИЧЕСКИЕ ИНЦИДЕНТЫ:");
-      for (const item of criticalIncidents) {
-        lines.push(
-          `- ${item.id} · ${item.product} · ${item.assigneeEmployee || "Исполнитель не указан"} · SLA: ${formatMonitorSla(item, now)}`,
-        );
-      }
-      lines.push("");
-    }
-
-    if (coordQueue.length > 0) {
-      lines.push("НА КООРДИНАТОРАХ (ТРЕБУЮТ ПЕРЕДАЧИ):");
-      for (const item of coordQueue) {
-        lines.push(
-          `- ${item.id} · ${item.product} (${statusLabels[item.status]}) · ${item.assigneeEmployee || "Без исполнителя"}`,
-        );
-      }
-      lines.push("");
-    }
-
-    if (burningSla.length > 0) {
-      lines.push("ГОРЯЩИЕ / ПРОСРОЧЕННЫЕ SLA:");
-      for (const item of burningSla.slice(0, 8)) {
-        lines.push(
-          `- ${item.id} · ${item.product} · SLA: ${formatMonitorSla(item, now)}`,
-        );
-      }
-      lines.push("");
-    }
-
-    if (degradedServices.length > 0) {
-      lines.push("ПРОБЛЕМНЫЕ IT-СЕРВИСЫ:");
-      for (const svc of degradedServices) {
-        lines.push(
-          `- ${svc.product}: ${svc.level === "critical" ? "Сбой" : "Деградация"} (${svc.count} акт.)`,
-        );
-      }
-    }
-
-    const report = lines.join("\n").trim();
+    const report = buildShiftHandoffReport({
+      visibleIncidents: visibleIncidents ?? [],
+      criticalIncidents,
+      unassignedCount,
+      serviceHealthItems,
+      now,
+    });
     try {
       await navigator.clipboard.writeText(report);
       setHandoffCopied(true);
@@ -960,14 +1039,14 @@ export function DashboardWorkspace({
   }
 
   async function exportToExcel() {
-    if (!incidents || !tableMatches || exporting) return;
+    if (!incidents || !matches || exporting) return;
     setExporting(true);
     setExportError("");
     try {
       const { downloadIncidentWorkbook } = await import("./incident-export");
       await downloadIncidentWorkbook({
         incidents,
-        tableIncidents: tableMatches,
+        tableIncidents: matches,
         events,
         criticalResolutions,
       });
@@ -1006,6 +1085,7 @@ export function DashboardWorkspace({
                 value={query}
                 onChange={(event) => {
                   setQuery(event.target.value);
+                  setSuppressClosedInSearch(false);
                   setPage(1);
                 }}
                 className="h-10 rounded-control border-white/15 bg-white/10 pr-3 pl-10 text-white placeholder:text-white/55 hover:border-white/30 focus-visible:bg-white/15"
@@ -1437,12 +1517,12 @@ export function DashboardWorkspace({
                 <span>
                   {matches
                     ? view === "groups"
-                      ? `В 4 ключевых группах: ${matches.length} из ${totalVisibleCount}`
+                      ? `В 4 ключевых группах: ${matches.length} из ${filteredTableCount}`
                       : `Найдено инцидентов: ${matches.length}`
                     : "Ожидаем подключения данных."}
                 </span>
                 {view === "groups" &&
-                  totalVisibleCount > (matches?.length ?? 0) && (
+                  filteredTableCount > (matches?.length ?? 0) && (
                     <button
                       type="button"
                       className="cursor-pointer font-medium text-mts-blue underline-offset-4 hover:underline"
@@ -1451,7 +1531,7 @@ export function DashboardWorkspace({
                         setPage(1);
                       }}
                     >
-                      Показать все {totalVisibleCount} в таблице
+                      Показать все {filteredTableCount} в таблице
                     </button>
                   )}
               </p>
@@ -1483,10 +1563,7 @@ export function DashboardWorkspace({
                   type="button"
                   variant="outline"
                   className="h-10 rounded-control"
-                  onClick={() => {
-                    setShowClosed((prev) => !prev);
-                    setPage(1);
-                  }}
+                  onClick={handleToggleClosed}
                 >
                   {includeClosed ? (
                     <EyeOff className="size-4" aria-hidden="true" />
@@ -1563,7 +1640,7 @@ export function DashboardWorkspace({
                 variant="outline"
                 className="h-10 rounded-control"
                 onClick={exportToExcel}
-                disabled={!tableMatches || exporting}
+                disabled={!matches || exporting}
                 aria-busy={exporting}
               >
                 <Download className="size-4" aria-hidden="true" />

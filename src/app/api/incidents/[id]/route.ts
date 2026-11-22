@@ -21,6 +21,8 @@ export const dynamic = "force-dynamic";
 const PatchIncidentSchema = z.object({
   assigneeEmployee: z.string().nullable().optional(),
   assigneeTeam: z.string().optional(),
+  additionalTeams: z.array(z.string().min(1).max(120)).max(8).optional(),
+  createWarRoom: z.boolean().optional(),
   status: z
     .enum(["new", "in_progress", "waiting", "investigation", "resolved", "closed"])
     .optional(),
@@ -32,7 +34,7 @@ const PatchIncidentSchema = z.object({
         "ASSIGNED_TO_COORDINATORS",
         "HIGH_PRIORITY",
         "INVESTIGATION",
-      ])
+      ]),
     )
     .optional(),
   description: z.string().optional(),
@@ -45,7 +47,7 @@ const PatchIncidentSchema = z.object({
 
 export async function PATCH(
   request: NextRequest,
-  context: { params: Promise<{ id: string }> }
+  context: { params: Promise<{ id: string }> },
 ) {
   await incidentStore.ensureInitialized();
   const { id } = await context.params;
@@ -61,7 +63,7 @@ export async function PATCH(
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsed.error.flatten() },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
@@ -85,7 +87,7 @@ export async function PATCH(
   if (isClosed && triesToReopen) {
     return NextResponse.json(
       { error: "Закрытый инцидент нельзя вернуть в работу" },
-      { status: 409 }
+      { status: 409 },
     );
   }
 
@@ -119,7 +121,9 @@ export async function PATCH(
       rawItem.assignedGroupName = COORDINATOR_TEAM_NAME;
     }
 
-    const prevGroups = prevSnapshot ? [...prevSnapshot.groups].sort().join(", ") : "";
+    const prevGroups = prevSnapshot
+      ? [...prevSnapshot.groups].sort().join(", ")
+      : "";
     const nextGroups = [...patch.groups].sort().join(", ");
     if (prevGroups !== nextGroups) {
       historyEntries.push({
@@ -159,7 +163,7 @@ export async function PATCH(
   if (patch.priority !== undefined) {
     const nextRawPriority = PRIORITY_TO_RAW[patch.priority];
     const prevRawPriority = String(
-      rawItem.priority ?? prevSnapshot?.rawPriority ?? ""
+      rawItem.priority ?? prevSnapshot?.rawPriority ?? "",
     );
     rawItem.priority = nextRawPriority.priority;
     rawItem.priorityId = nextRawPriority.priorityId;
@@ -232,8 +236,54 @@ export async function PATCH(
     .getSnapshot()
     .incidents.find((item) => item.id === id);
 
+  const primaryTeamNormalized = (updatedIncident?.assigneeTeam ?? "")
+    .trim()
+    .toLowerCase();
+
+  const coTeams = Array.from(
+    new Set(
+      (patch.additionalTeams ?? [])
+        .map((team) => team.trim())
+        .filter(
+          (team) =>
+            team.length > 0 && team.toLowerCase() !== primaryTeamNormalized,
+        ),
+    ),
+  );
+
+  if (coTeams.length > 0) {
+    historyEntries.push({
+      incidentId: id,
+      field: "assignee",
+      oldValue: null,
+      newValue: `Привлечённые подразделения: ${coTeams.join(", ")}`,
+      actor,
+    });
+  }
+
+  const isCriticalNow = Boolean(
+    updatedIncident &&
+      (updatedIncident.priority === "critical" ||
+        updatedIncident.groups.includes("CRITICAL")),
+  );
+
+  const warRoomCreated = Boolean(patch.createWarRoom && updatedIncident);
+  const warRoomId =
+    warRoomCreated && updatedIncident ? `WR-${updatedIncident.code}` : null;
+  const warRoomPath =
+    warRoomCreated && updatedIncident
+      ? `/war-room/${encodeURIComponent(updatedIncident.id)}`
+      : null;
+  const warRoomUrl = warRoomPath
+    ? `${request.nextUrl.origin}${warRoomPath}`
+    : null;
+  const warRoomCreatedAt = warRoomCreated ? new Date().toISOString() : null;
+
   const shouldSendMtsLink = Boolean(
-    patch.sendToMtsLink || (assigneeChanged && nextEmployee.length > 0)
+    patch.sendToMtsLink ||
+      (assigneeChanged && nextEmployee.length > 0) ||
+      coTeams.length > 0 ||
+      warRoomCreated,
   );
 
   let recipient: string | undefined;
@@ -244,32 +294,102 @@ export async function PATCH(
       updatedIncident.assigneeTeam ||
       "Ответственный исполнитель";
 
+    const slaRemainingMinutes =
+      updatedIncident.slaRemainingMs !== null
+        ? Math.round(updatedIncident.slaRemainingMs / 60_000)
+        : null;
+
+    const escalationLevel = isCriticalNow
+      ? "CRITICAL_MI"
+      : updatedIncident.priority === "high"
+        ? "L2_HIGH"
+        : "L1_STANDARD";
+
+    const sharedTelemetry = {
+      incidentId: updatedIncident.id,
+      incidentCode: updatedIncident.code,
+      product: updatedIncident.product,
+      title: updatedIncident.title,
+      description: updatedIncident.description,
+      priority: updatedIncident.rawPriority,
+      priorityLevel: updatedIncident.priority,
+      status: updatedIncident.rawStatus,
+      statusCode: updatedIncident.status,
+      slaDeadline: updatedIncident.slaDeadline,
+      slaRemainingMinutes,
+      slaStatus: updatedIncident.slaStatus,
+      escalationLevel,
+      isMaster: Boolean(updatedIncident.isMaster),
+      isNeedUp: Boolean(updatedIncident.isNeedUp),
+      serviceType: updatedIncident.serviceType ?? null,
+      receivingChannel: updatedIncident.receivingChannel ?? null,
+      aiRiskScore: updatedIncident.ai?.riskScore ?? null,
+      aiSummary: updatedIncident.ai?.summary ?? null,
+      groups: updatedIncident.groups,
+      warRoomCreated,
+      warRoomId,
+      warRoomUrl,
+      warRoomPath,
+      warRoomCreatedAt,
+      sentBy: actor,
+      sentAt: new Date().toISOString(),
+    };
+
     await createMtsLinkMessage({
       incidentId: updatedIncident.id,
       recipientName: recipient,
       recipientTeam: updatedIncident.assigneeTeam,
       messageType: "ASSIGNED",
-      title: `Назначен инцидент ${updatedIncident.code} (${updatedIncident.product})`,
+      title: warRoomCreated
+        ? `War Room + назначение ${updatedIncident.code} (${updatedIncident.product})`
+        : `Назначен инцидент ${updatedIncident.code} (${updatedIncident.product})`,
       payload: {
-        incidentId: updatedIncident.id,
-        product: updatedIncident.product,
-        title: updatedIncident.title,
-        description: updatedIncident.description,
-        priority: updatedIncident.rawPriority,
-        status: updatedIncident.rawStatus,
-        slaDeadline: updatedIncident.slaDeadline,
+        role: "primary",
         assigneeEmployee: updatedIncident.assigneeEmployee ?? null,
         assigneeTeam: updatedIncident.assigneeTeam,
-        groups: updatedIncident.groups,
-        sentBy: actor,
+        coAssigneeTeams: coTeams,
+        ...sharedTelemetry,
       },
     });
+
+    for (const extraTeam of coTeams) {
+      await createMtsLinkMessage({
+        incidentId: updatedIncident.id,
+        recipientName: "Дежурная смена",
+        recipientTeam: extraTeam,
+        messageType: "ASSIGNED",
+        title: `Привлечение к критическому МИ ${updatedIncident.code} (${updatedIncident.product})`,
+        payload: {
+          role: "co_assignee",
+          primaryAssignee: recipient,
+          primaryTeam: updatedIncident.assigneeTeam,
+          coAssigneeTeam: extraTeam,
+          coAssigneeTeams: coTeams,
+          ...sharedTelemetry,
+        },
+      });
+    }
+
+    if (warRoomCreated && warRoomUrl) {
+      historyEntries.push({
+        incidentId: id,
+        field: "mts_link_sent",
+        oldValue: "War Room",
+        newValue: `Создан оперативный штаб ${warRoomId} (${warRoomUrl})`,
+        actor,
+      });
+    }
+
+    const deliverySummary =
+      coTeams.length > 0
+        ? `Данные отправлены в МТС Link: ${recipient} + соисполнители (${coTeams.join(", ")})${warRoomCreated ? ` · War Room ${warRoomId}` : ""}`
+        : `Данные отправлены в МТС Link: ${recipient}${warRoomCreated ? ` · War Room ${warRoomId}` : ""}`;
 
     historyEntries.push({
       incidentId: id,
       field: "mts_link_sent",
       oldValue: null,
-      newValue: `Данные отправлены в МТС Link: ${recipient}`,
+      newValue: deliverySummary,
       actor,
     });
 
@@ -279,7 +399,10 @@ export async function PATCH(
       incidentCode: updatedIncident.code,
       product: updatedIncident.product,
       type: "MTS_LINK_SENT",
-      message: `Данные по ${updatedIncident.code} отправлены ответственному ${recipient} в МТС Link`,
+      message:
+        coTeams.length > 0
+          ? `Данные по ${updatedIncident.code} отправлены ответственному ${recipient} и ещё в ${coTeams.length} подр. в МТС Link`
+          : `Данные по ${updatedIncident.code} отправлены ответственному ${recipient} в МТС Link`,
       createdAt: new Date().toISOString(),
     });
   }
@@ -293,5 +416,10 @@ export async function PATCH(
     incident: updatedIncident ?? null,
     mtsLinkSent: shouldSendMtsLink,
     recipient,
+    coTeamsSent: coTeams,
+    warRoomCreated,
+    warRoomId,
+    warRoomUrl,
+    warRoomPath,
   });
 }

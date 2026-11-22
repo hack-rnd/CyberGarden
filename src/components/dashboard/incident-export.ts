@@ -1,9 +1,19 @@
 import ExcelJS from "exceljs";
 
 import { summarizeActivity } from "./incident-analytics";
-import { deadlineFor, isIncidentActive, type DashboardIncident, type IncidentTimelineEvent } from "./dashboard-model";
+import {
+  deadlineFor,
+  isIncidentActive,
+  type DashboardIncident,
+  type IncidentTimelineEvent,
+} from "./dashboard-model";
 import { incidentGroups } from "./dashboard-summary";
-import { formatDuration, priorityLabels, sortIncidentsForTable, statusLabels } from "./incident-views";
+import {
+  formatDuration,
+  priorityLabels,
+  sortIncidentsForTable,
+  statusLabels,
+} from "./incident-views";
 
 type ExportData = {
   incidents: readonly DashboardIncident[];
@@ -12,6 +22,14 @@ type ExportData = {
   criticalResolutions: ReadonlyMap<string, number | null>;
   exportedAt: number;
 };
+
+const UNASSIGNED_TEAM_LABELS = new Set([
+  "",
+  "не назначена",
+  "не назначен",
+  "не указан",
+  "не указана",
+]);
 
 const dateFormat = new Intl.DateTimeFormat("sv-SE", {
   timeZone: "Europe/Moscow",
@@ -27,6 +45,17 @@ const hourFormat = new Intl.DateTimeFormat("ru-RU", {
 
 const chartWidth = 780;
 const chartHeight = 350;
+
+function formatAssignee(incident: DashboardIncident): string {
+  const employee = incident.assigneeEmployee?.trim() || "";
+  const rawTeam = incident.assigneeTeam?.trim() || "";
+  const team = UNASSIGNED_TEAM_LABELS.has(rawTeam.toLowerCase()) ? "" : rawTeam;
+
+  if (employee && team) return `${employee} · ${team}`;
+  if (employee) return employee;
+  if (team) return `Исполнитель не указан · ${team}`;
+  return "Исполнитель не указан";
+}
 
 function createActivityChart(activity: ReturnType<typeof summarizeActivity>) {
   const canvas = document.createElement("canvas");
@@ -49,8 +78,20 @@ function createActivityChart(activity: ReturnType<typeof summarizeActivity>) {
   ctx.fillText("Количество инцидентов · время по Москве", 24, 57);
 
   const series = [
-    { key: "created" as const, label: "Создано", color: "#D9002B", dash: [], visible: activity.showCreated },
-    { key: "resolved" as const, label: "Критических решено", color: "#007A62", dash: [6, 4], visible: activity.showResolved },
+    {
+      key: "created" as const,
+      label: "Создано",
+      color: "#D9002B",
+      dash: [],
+      visible: activity.showCreated,
+    },
+    {
+      key: "resolved" as const,
+      label: "Решено и закрыто",
+      color: "#007A62",
+      dash: [6, 4],
+      visible: activity.showResolved,
+    },
   ].filter((line) => line.visible);
 
   if (!series.length) {
@@ -59,14 +100,19 @@ function createActivityChart(activity: ReturnType<typeof summarizeActivity>) {
   }
 
   const plot = { left: 55, right: 746, top: 88, bottom: 267 };
-  const max = Math.max(1, ...series.flatMap(({ key }) =>
-    activity.buckets.map((bucket) => bucket[key]),
-  ));
+  const max = Math.max(
+    1,
+    ...series.flatMap(({ key }) =>
+      activity.buckets.map((bucket) => bucket[key]),
+    ),
+  );
   const tick = Math.ceil(max / 5);
   const ceiling = tick * Math.ceil(max / tick);
   const x = (index: number) =>
-    plot.left + (plot.right - plot.left) * index / (activity.buckets.length - 1);
-  const y = (value: number) => plot.bottom - (plot.bottom - plot.top) * value / ceiling;
+    plot.left +
+    ((plot.right - plot.left) * index) / (activity.buckets.length - 1);
+  const y = (value: number) =>
+    plot.bottom - ((plot.bottom - plot.top) * value) / ceiling;
 
   ctx.textBaseline = "middle";
   ctx.textAlign = "right";
@@ -100,7 +146,7 @@ function createActivityChart(activity: ReturnType<typeof summarizeActivity>) {
     });
     ctx.stroke();
 
-    const legendX = 24 + lineIndex * 125;
+    const legendX = 24 + lineIndex * 145;
     ctx.beginPath();
     ctx.moveTo(legendX, 320);
     ctx.lineTo(legendX + 23, 320);
@@ -118,27 +164,45 @@ function formatDate(timestamp: number) {
   return Number.isFinite(timestamp) ? dateFormat.format(timestamp) : null;
 }
 
-function slaValue(incident: DashboardIncident, exportedAt: number, resolvedAt?: number | null) {
+function slaValue(
+  incident: DashboardIncident,
+  exportedAt: number,
+  resolvedAt?: number | null,
+) {
+  if (incident.status === "investigation") return "Этап RCA";
   const deadline = deadlineFor(incident);
-  if (!isIncidentActive(incident) && (resolvedAt == null || !Number.isFinite(deadline))) {
+  if (
+    !isIncidentActive(incident) &&
+    (resolvedAt == null || !Number.isFinite(deadline))
+  ) {
     return "Завершён";
   }
   if (!Number.isFinite(deadline)) return "Срок не задан";
   const remaining = deadline - (resolvedAt ?? exportedAt);
-  return remaining <= 0 ? "Просрочен" : formatDuration(Math.ceil(remaining / 1000));
+  return remaining <= 0
+    ? "Просрочен"
+    : formatDuration(Math.ceil(remaining / 1000));
 }
 
 function styleHeader(row: ExcelJS.Row) {
   row.height = 22;
   row.eachCell((cell) => {
     cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
-    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1D2023" } };
+    cell.fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "FF1D2023" },
+    };
     cell.alignment = { vertical: "middle" };
   });
 }
 
 export function createIncidentWorkbook({
-  incidents, tableIncidents, events, criticalResolutions, exportedAt,
+  incidents,
+  tableIncidents,
+  events,
+  criticalResolutions,
+  exportedAt,
 }: ExportData) {
   const workbook = new ExcelJS.Workbook();
   const activity = summarizeActivity({ incidents, events }, exportedAt);
@@ -148,66 +212,100 @@ export function createIncidentWorkbook({
   analytics.addRows([
     ["Начало периода (МСК)", formatDate(activity.start)],
     ["Конец периода (МСК)", formatDate(activity.end)],
-    ["Создано", activity.showCreated ? activity.totalCreated : "Нет данных"],
-    ["Критических решено", activity.showResolved ? activity.totalResolved : "Нет данных"],
+    ["Создано за 24ч", activity.showCreated ? activity.totalCreated : "Нет данных"],
+    [
+      "Решено и закрыто",
+      activity.showResolved ? activity.totalResolved : "Нет данных",
+    ],
+    [
+      "Критических решено",
+      activity.showResolved ? activity.resolvedCriticalCount : "Нет данных",
+    ],
     ["Активных с указанным SLA", activity.trackedSla],
     ["Просрочено SLA", activity.overdueSla],
+    ["Соблюдение SLA", `${activity.slaCompliancePct}%`],
   ]);
   analytics.addRow([]);
-  styleHeader(analytics.addRow(["Начало часа (МСК)", "Создано", "Критических решено"]));
-  analytics.addRows(activity.buckets.map((bucket) => [
-    formatDate(bucket.start),
-    activity.showCreated ? bucket.created : null,
-    activity.showResolved ? bucket.resolved : null,
-  ]));
+  styleHeader(
+    analytics.addRow(["Начало часа (МСК)", "Создано", "Решено и закрыто"]),
+  );
+  analytics.addRows(
+    activity.buckets.map((bucket) => [
+      formatDate(bucket.start),
+      activity.showCreated ? bucket.created : null,
+      activity.showResolved ? bucket.resolved : null,
+    ]),
+  );
 
   if (typeof document !== "undefined") {
-    const imageId = workbook.addImage({ base64: createActivityChart(activity), extension: "png" });
+    const imageId = workbook.addImage({
+      base64: createActivityChart(activity),
+      extension: "png",
+    });
     analytics.addImage(imageId, {
       tl: { col: 4, row: 1 },
       ext: { width: chartWidth, height: chartHeight },
     });
   }
 
-  const table = workbook.addWorksheet("Инциденты", { views: [{ state: "frozen", ySplit: 1 }] });
+  const table = workbook.addWorksheet("Инциденты", {
+    views: [{ state: "frozen", ySplit: 1 }],
+  });
   table.columns = [
     { header: "ID", width: 27 },
     { header: "Продукт", width: 32 },
     { header: "Группы", width: 30 },
     { header: "Приоритет", width: 17 },
     { header: "Статус", width: 25 },
-    { header: "Исполнитель", width: 38 },
+    { header: "Исполнитель", width: 48 },
     { header: "Создан (МСК)", width: 22 },
     { header: "Срок SLA (МСК)", width: 22 },
     { header: "До SLA", width: 18 },
     { header: "ИИ-риск", width: 13, style: { numFmt: "0%" } },
   ];
 
-  const rows = sortIncidentsForTable(tableIncidents, criticalResolutions);
-  table.addRows(rows.map((incident) => [
-    incident.id,
-    incident.product,
-    incidentGroups.filter(({ id }) => incident.groups.includes(id)).map(({ title }) => title).join(", "),
-    priorityLabels[incident.priority],
-    criticalResolutions.has(incident.id) ? "Критический решён" : statusLabels[incident.status],
-    incident.assigneeTeam || "Не назначен",
-    formatDate(Date.parse(incident.createdAt)),
-    formatDate(Date.parse(incident.slaDeadline ?? "")),
-    slaValue(incident, exportedAt, criticalResolutions.get(incident.id)),
-    incident.ai ? incident.ai.riskScore / 100 : null,
-  ]));
-  table.autoFilter = { from: { row: 1, column: 1 }, to: { row: rows.length + 1, column: table.columnCount } };
+  const rows = sortIncidentsForTable(tableIncidents, criticalResolutions, exportedAt);
+  table.addRows(
+    rows.map((incident) => [
+      incident.id,
+      incident.product,
+      incidentGroups
+        .filter(({ id }) => incident.groups.includes(id))
+        .map(({ title }) => title)
+        .join(", "),
+      priorityLabels[incident.priority],
+      criticalResolutions.has(incident.id)
+        ? "Критический решён"
+        : statusLabels[incident.status],
+      formatAssignee(incident),
+      formatDate(Date.parse(incident.createdAt)),
+      formatDate(Date.parse(incident.slaDeadline ?? "")),
+      slaValue(incident, exportedAt, criticalResolutions.get(incident.id)),
+      incident.ai ? incident.ai.riskScore / 100 : null,
+    ]),
+  );
+  table.autoFilter = {
+    from: { row: 1, column: 1 },
+    to: { row: rows.length + 1, column: table.columnCount },
+  };
   styleHeader(table.getRow(1));
 
   return workbook;
 }
 
-export async function downloadIncidentWorkbook(data: Omit<ExportData, "exportedAt">) {
+export async function downloadIncidentWorkbook(
+  data: Omit<ExportData, "exportedAt">,
+) {
   const exportedAt = Date.now();
-  const buffer = await createIncidentWorkbook({ ...data, exportedAt }).xlsx.writeBuffer();
-  const url = URL.createObjectURL(new Blob([buffer], {
-    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  }));
+  const buffer = await createIncidentWorkbook({
+    ...data,
+    exportedAt,
+  }).xlsx.writeBuffer();
+  const url = URL.createObjectURL(
+    new Blob([buffer], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }),
+  );
   const link = document.createElement("a");
   link.href = url;
   link.download = `incidents-${dateFormat.format(exportedAt).slice(0, 10)}.xlsx`;

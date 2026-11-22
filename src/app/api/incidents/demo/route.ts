@@ -36,7 +36,7 @@ const DemoIncidentSchema = z.object({
     .optional(),
   assigneeTeam: z.string().optional(),
   assigneeEmployee: z.string().optional(),
-  slaMinutes: z.number().int().min(1).max(10080).optional(),
+  slaMinutes: z.number().int().min(1).max(10080).nullable().optional(),
 });
 
 // --- POST HANDLER ---
@@ -81,9 +81,13 @@ export async function POST(request: NextRequest) {
 
   const now = new Date();
   const slaMinutes =
-    input.slaMinutes ?? (effectivePriority === "critical" ? 20 : 120);
+    input.slaMinutes === null
+      ? null
+      : input.slaMinutes ?? (effectivePriority === "critical" ? 20 : 120);
   const deadlineIso =
-    effectiveStatus === "investigation" || effectiveStatus === "closed"
+    slaMinutes === null ||
+    effectiveStatus === "investigation" ||
+    effectiveStatus === "closed"
       ? null
       : new Date(now.getTime() + slaMinutes * 60_000).toISOString();
 
