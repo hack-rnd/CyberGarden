@@ -13,8 +13,13 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { cn } from "@/lib/utils";
 
-import { getAiSuggestedAssignee, IncidentAssignment, IncidentHistory } from "./incident-actions";
+import {
+  getAiSuggestedAssignee,
+  IncidentAssignment,
+  IncidentHistory,
+} from "./incident-actions";
 import type { DashboardIncident } from "./dashboard-model";
 import { AnalyzeButton, type AiAnalysisControls } from "./dashboard-ai";
 
@@ -24,7 +29,7 @@ function DetailField({ label, children }: { label: string; children: ReactNode }
   return (
     <div className="min-w-0">
       <dt className="text-label-sm text-muted-foreground">{label}</dt>
-      <dd className="mt-2 wrap-break-word">{children}</dd>
+      <dd className="mt-1.5 wrap-break-word">{children}</dd>
     </div>
   );
 }
@@ -34,7 +39,7 @@ function DetailContextFlags({ incident }: { incident: DashboardIncident }) {
   if (incident.isNeedUp) {
     flags.push({
       label: "Требует устранения последствий (УП)",
-      className: "border-mts-amber/40 bg-mts-amber/12 text-[#B8380E]",
+      className: "border-border bg-secondary text-foreground",
     });
   }
   if (incident.isMaster) {
@@ -78,6 +83,50 @@ function DetailContextFlags({ incident }: { incident: DashboardIncident }) {
   );
 }
 
+function RiskProgressBar({ score }: { score: number }) {
+  const barColor =
+    score >= 70
+      ? "bg-mts-red"
+      : score >= 40
+        ? "bg-mts-amber"
+        : "bg-mts-emerald";
+  const textColor =
+    score >= 70
+      ? "text-mts-crimson"
+      : score >= 40
+        ? "text-mts-amber"
+        : "text-mts-emerald";
+  const levelLabel =
+    score >= 70 ? "Высокий риск" : score >= 40 ? "Средний риск" : "Низкий риск";
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-2 text-label-md">
+        <span className="font-medium">Риск эскалации</span>
+        <span className={cn("font-semibold tabular-nums", textColor)}>
+          {score}% · {levelLabel}
+        </span>
+      </div>
+      <div
+        role="progressbar"
+        aria-label="Риск эскалации"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={score}
+        className="h-2 w-full overflow-hidden rounded-pill bg-border"
+      >
+        <div
+          className={cn(
+            "h-full rounded-pill transition-[width] duration-300",
+            barColor,
+          )}
+          style={{ width: `${score}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
 function HandoffText({ text }: { text: string }) {
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "manual">("idle");
   const textarea = useRef<HTMLTextAreaElement>(null);
@@ -102,7 +151,7 @@ function HandoffText({ text }: { text: string }) {
           readOnly
           rows={5}
           value={text}
-          className="mt-2 block w-full rounded-control border bg-background p-4 text-label-md font-normal focus-visible:outline-2 focus-visible:outline-ring"
+          className="mt-2 block w-full rounded-control border bg-card p-3 text-label-md font-normal focus-visible:outline-2 focus-visible:outline-ring"
         />
       </label>
       <Button
@@ -125,14 +174,16 @@ function HandoffText({ text }: { text: string }) {
 const similarSearchResultSchema = z.object({
   status: z.enum(["matched", "insufficient_data"]),
   observations: z.array(z.string()),
-  similarIncident: z.object({
-    id: z.string(),
-    code: z.string(),
-    product: z.string(),
-    similarityReason: z.string(),
-    confirmedRootCause: z.string(),
-    resolution: z.string(),
-  }).nullable(),
+  similarIncident: z
+    .object({
+      id: z.string(),
+      code: z.string(),
+      product: z.string(),
+      similarityReason: z.string(),
+      confirmedRootCause: z.string(),
+      resolution: z.string(),
+    })
+    .nullable(),
   hypothesis: z.string(),
   firstCheck: z.string(),
   evidence: z.array(z.string()),
@@ -144,7 +195,8 @@ async function findSimilarIncident(
   incident: DashboardIncident,
   serverBacked: boolean,
 ): Promise<SimilarSearchResult> {
-  const { id, code, product, title, description, status, priority, contentHash } = incident;
+  const { id, code, product, title, description, status, priority, contentHash } =
+    incident;
   const body = serverBacked
     ? { incidentId: id }
     : {
@@ -171,10 +223,14 @@ async function findSimilarIncident(
     throw new Error("Не удалось найти похожий инцидент. Попробуйте ещё раз.");
   }
 
-  const result = similarSearchResultSchema.safeParse(await response.json().catch(() => null));
+  const result = similarSearchResultSchema.safeParse(
+    await response.json().catch(() => null),
+  );
 
   if (!result.success) {
-    throw new Error("Сервис вернул ответ в неизвестном формате. Попробуйте ещё раз.");
+    throw new Error(
+      "Сервис вернул ответ в неизвестном формате. Попробуйте ещё раз.",
+    );
   }
 
   return result.data;
@@ -185,9 +241,11 @@ function SimilarSearchList({ title, items }: { title: string; items: string[] })
     <div className="space-y-2">
       <h4 className="font-semibold">{title}</h4>
       {items.length > 0 ? (
-        <ul className="list-disc space-y-2 pl-4">
+        <ul className="list-disc space-y-1.5 pl-4 text-label-md">
           {items.map((item, index) => (
-            <li key={index} className="wrap-break-word">{item}</li>
+            <li key={index} className="wrap-break-word">
+              {item}
+            </li>
           ))}
         </ul>
       ) : (
@@ -216,7 +274,7 @@ function SimilarIncidentSearch({
       <Button
         type="button"
         variant="outline"
-        className="h-auto min-h-10 rounded-control whitespace-normal"
+        className="h-auto min-h-10 rounded-control bg-card whitespace-normal"
         disabled={search.isPending}
         onClick={() => search.mutate()}
       >
@@ -231,17 +289,22 @@ function SimilarIncidentSearch({
           <div className="space-y-2">
             <h4 className="font-semibold">Похожий случай</h4>
             {result.status === "matched" && similar && (
-              <div className="space-y-2 rounded-control border bg-background p-3">
-                <p className="font-medium">{similar.code} · {similar.product}</p>
+              <div className="space-y-2 rounded-control border bg-background p-3 text-label-md">
+                <p className="font-medium">
+                  {similar.code} · {similar.product}
+                </p>
                 <p className="wrap-break-word">{similar.similarityReason}</p>
                 <p className="wrap-break-word">
-                  <strong>Подтверждённая причина:</strong> {similar.confirmedRootCause}
+                  <strong>Подтверждённая причина:</strong>{" "}
+                  {similar.confirmedRootCause}
                 </p>
-                <p className="wrap-break-word"><strong>Решение:</strong> {similar.resolution}</p>
+                <p className="wrap-break-word">
+                  <strong>Решение:</strong> {similar.resolution}
+                </p>
               </div>
             )}
             {result.status === "insufficient_data" && (
-              <p className="rounded-control bg-muted p-3 text-muted-foreground">
+              <p className="rounded-control bg-muted p-3 text-label-md text-muted-foreground">
                 Надёжного совпадения в архиве нет — данных для вывода недостаточно
               </p>
             )}
@@ -251,11 +314,11 @@ function SimilarIncidentSearch({
               <h4 className="font-semibold">Гипотеза ИИ</h4>
               <Badge variant="outline">Гипотеза</Badge>
             </div>
-            <p className="wrap-break-word">{result.hypothesis}</p>
+            <p className="text-label-md wrap-break-word">{result.hypothesis}</p>
           </div>
           <div className="space-y-2 rounded-control border-l-4 border-l-mts-blue bg-mts-blue/5 p-3">
             <h4 className="font-semibold">Что проверить первым</h4>
-            <p className="wrap-break-word">{result.firstCheck}</p>
+            <p className="text-label-md wrap-break-word">{result.firstCheck}</p>
           </div>
           <SimilarSearchList title="Основания" items={result.evidence} />
         </div>
@@ -267,9 +330,9 @@ function SimilarIncidentSearch({
 // --- DETAILS SHEET ---
 
 export function IncidentDetails(props: {
-  autoOpenAssign?: boolean;
   incident?: DashboardIncident;
   serverBacked?: boolean;
+  autoOpenAssign?: boolean;
   status?: ReactNode;
   priority?: string;
   created?: ReactNode;
@@ -278,6 +341,7 @@ export function IncidentDetails(props: {
   groups?: ReactNode;
   itsm?: ReactNode;
   onClose: () => void;
+  onAssigned?: (message: string) => void;
   restoreFocus: () => void;
   aiControls: AiAnalysisControls;
 }) {
@@ -296,8 +360,10 @@ export function IncidentDetails(props: {
     itsm,
     aiControls,
   } = props.incident ? props : lastDetails;
-  const { onClose, restoreFocus } = props;
-  const showHistory = Boolean(props.incident && props.serverBacked && historyId === props.incident.id);
+  const { onClose, onAssigned, restoreFocus } = props;
+  const showHistory = Boolean(
+    props.incident && props.serverBacked && historyId === props.incident.id,
+  );
   const analysis = incident?.ai;
   const risk = analysis?.riskScore;
   const riskScore =
@@ -305,6 +371,7 @@ export function IncidentDetails(props: {
       ? risk
       : undefined;
   const handoff = analysis?.handoffMessage.trim();
+  const aiSuggestion = incident ? getAiSuggestedAssignee(incident) : null;
 
   return (
     <Sheet
@@ -363,8 +430,16 @@ export function IncidentDetails(props: {
               </Button>
             </div>
           )}
-          {showHistory && <div className="px-6 pb-6"><IncidentHistory id={incident.id} /></div>}
-          <div key={incident.id} hidden={showHistory} className="space-y-6 px-6 pb-6">
+          {showHistory && (
+            <div className="px-6 pb-6">
+              <IncidentHistory id={incident.id} />
+            </div>
+          )}
+          <div
+            key={incident.id}
+            hidden={showHistory}
+            className="space-y-6 px-6 pb-6"
+          >
             <section
               aria-labelledby="incident-details-heading"
               className="space-y-4"
@@ -386,7 +461,7 @@ export function IncidentDetails(props: {
                         )}
                     </span>
                   ) : (
-                    <span className="font-medium text-[#B8380E]">
+                    <span className="font-medium text-muted-foreground">
                       Исполнитель не указан
                     </span>
                   )}
@@ -427,6 +502,14 @@ export function IncidentDetails(props: {
                   key={`${incident.id}-${props.autoOpenAssign ? "assign" : "view"}`}
                   incident={incident}
                   defaultOpen={Boolean(props.autoOpenAssign)}
+                  onSuccess={(message) => {
+                    setHistoryId(undefined);
+                    if (onAssigned) {
+                      onAssigned(message);
+                    } else {
+                      onClose();
+                    }
+                  }}
                 />
               )}
             </section>
@@ -448,32 +531,21 @@ export function IncidentDetails(props: {
                   ИИ-анализ пока недоступен.
                 </p>
               )}
-              {(() => {
-                const suggestion = getAiSuggestedAssignee(incident);
-                if (!suggestion) return null;
-                return (
-                  <p>
-                    <strong>Рекомендуемый ответственный (совет ИИ):</strong>{" "}
-                    {suggestion.employee} — решение принимает координатор.
-                  </p>
-                );
-              })()}
-              {riskScore !== undefined && (
-                <div>
-                  <label className="block font-medium" htmlFor="incident-risk-meter">
-                    Риск эскалации · {riskScore}%
-                  </label>
-                  <meter
-                    id="incident-risk-meter"
-                    className="mt-2 h-4 w-full"
-                    min={0}
-                    max={100}
-                    value={riskScore}
-                  />
-                </div>
+              {analysis?.recommendedTeam && (
+                <p className="text-label-md">
+                  <strong>Рекомендуемая команда:</strong>{" "}
+                  {analysis.recommendedTeam}
+                </p>
               )}
+              {aiSuggestion && (
+                <p className="text-label-md">
+                  <strong>Рекомендуемый ответственный (совет ИИ):</strong>{" "}
+                  {aiSuggestion.employee} — решение принимает координатор.
+                </p>
+              )}
+              {riskScore !== undefined && <RiskProgressBar score={riskScore} />}
               {analysis?.riskReason && (
-                <p className="whitespace-pre-wrap wrap-break-word">
+                <p className="text-label-md whitespace-pre-wrap wrap-break-word">
                   {analysis.riskReason}
                 </p>
               )}

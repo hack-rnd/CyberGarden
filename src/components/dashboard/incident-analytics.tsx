@@ -47,18 +47,13 @@ type AnalyticsProps = {
 // --- AGGREGATION ---
 
 function resolveEffectiveEnd(
-  { incidents, events }: AnalyticsProps,
+  { incidents }: AnalyticsProps,
   fallbackEnd: number,
 ) {
   let latest = fallbackEnd;
 
   for (const incident of incidents ?? []) {
     const time = Date.parse(incident.createdAt ?? "");
-    if (Number.isFinite(time) && time > latest) latest = time;
-  }
-
-  for (const event of events ?? []) {
-    const time = Date.parse(event.createdAt ?? "");
     if (Number.isFinite(time) && time > latest) latest = time;
   }
 
@@ -69,7 +64,7 @@ export function summarizeActivity(
   { incidents, events }: AnalyticsProps,
   fallbackEnd: number,
 ) {
-  const end = resolveEffectiveEnd({ incidents, events }, fallbackEnd);
+  const end = resolveEffectiveEnd({ incidents }, fallbackEnd);
   const start = end - 24 * hour;
   const buckets = Array.from({ length: 24 }, (_, index) => ({
     start: start + index * hour,
@@ -88,34 +83,52 @@ export function summarizeActivity(
     buckets[index][series]++;
   }
 
-  for (const incident of incidents ?? []) {
-    add(incident.createdAt, "created");
-  }
-
-  const countedEvents = new Set<string>();
-
+  const resolvedTimeByIncident: Record<string, string> = {};
   for (const event of events ?? []) {
-    if (event.eventType !== "CRITICAL_RESOLVED" || countedEvents.has(event.id)) {
+    if (
+      event.eventType !== "CRITICAL_RESOLVED" &&
+      event.eventType !== "INCIDENT_AUTO_CLOSED"
+    ) {
       continue;
     }
-
-    countedEvents.add(event.id);
-    add(event.createdAt, "resolved");
+    const prev = resolvedTimeByIncident[event.incidentId];
+    if (!prev || Date.parse(event.createdAt) > Date.parse(prev)) {
+      resolvedTimeByIncident[event.incidentId] = event.createdAt;
+    }
   }
 
   let trackedSla = 0;
   let overdueSla = 0;
+  let resolvedCriticalCount = 0;
 
   for (const incident of incidents ?? []) {
-    if (!isIncidentActive(incident) || !Number.isFinite(deadlineFor(incident))) {
-      continue;
+    add(incident.createdAt, "created");
+
+    if (incident.status === "resolved" || incident.status === "closed") {
+      if (incident.priority === "critical") {
+        resolvedCriticalCount++;
+      }
+      const resolvedAt =
+        resolvedTimeByIncident[incident.id] ?? incident.createdAt;
+      add(resolvedAt, "resolved");
     }
 
-    trackedSla++;
-    if (currentSlaStatus(incident, end) === "breached") {
-      overdueSla++;
+    if (
+      isIncidentActive(incident) &&
+      incident.status !== "investigation" &&
+      Number.isFinite(deadlineFor(incident))
+    ) {
+      trackedSla++;
+      if (currentSlaStatus(incident, end) === "breached") {
+        overdueSla++;
+      }
     }
   }
+
+  const slaCompliancePct =
+    trackedSla > 0
+      ? Math.round(((trackedSla - overdueSla) / trackedSla) * 100)
+      : 100;
 
   return {
     start,
@@ -123,12 +136,19 @@ export function summarizeActivity(
     buckets,
     trackedSla,
     overdueSla,
-    showCreated: incidents?.length === 0 || incidents?.some((incident) =>
-      Number.isFinite(Date.parse(incident.createdAt)),
-    ) === true,
-    showResolved: events !== undefined,
+    slaCompliancePct,
+    resolvedCriticalCount,
+    showCreated:
+      incidents?.length === 0 ||
+      incidents?.some((incident) =>
+        Number.isFinite(Date.parse(incident.createdAt)),
+      ) === true,
+    showResolved: incidents !== undefined,
     totalCreated: buckets.reduce((total, bucket) => total + bucket.created, 0),
-    totalResolved: buckets.reduce((total, bucket) => total + bucket.resolved, 0),
+    totalResolved: buckets.reduce(
+      (total, bucket) => total + bucket.resolved,
+      0,
+    ),
   };
 }
 
@@ -158,7 +178,7 @@ function ActivityChart({ incidents, events }: AnalyticsProps) {
               aria-hidden="true"
               className="size-2 rounded-full bg-mts-red"
             />
-            Создано: <strong>{totalCreated}</strong>
+            Создано за 24ч: <strong>{totalCreated}</strong>
           </li>
         )}
         {showResolved && (
@@ -167,7 +187,12 @@ function ActivityChart({ incidents, events }: AnalyticsProps) {
               aria-hidden="true"
               className="size-2 rounded-full bg-mts-emerald"
             />
-            Критических решено: <strong>{totalResolved}</strong>
+            Решено и закрыто: <strong>{totalResolved}</strong>
+            {activity.resolvedCriticalCount > 0 && (
+              <span className="text-label-sm text-muted-foreground">
+                (критических: {activity.resolvedCriticalCount})
+              </span>
+            )}
           </li>
         )}
         {activity.trackedSla > 0 && (
@@ -176,6 +201,9 @@ function ActivityChart({ incidents, events }: AnalyticsProps) {
             <strong className="text-mts-crimson">
               {activity.overdueSla} из {activity.trackedSla}
             </strong>
+            <span className="ml-2 text-label-sm text-muted-foreground">
+              · в норме {activity.slaCompliancePct}%
+            </span>
           </li>
         )}
       </ul>
@@ -232,7 +260,7 @@ function ActivityChart({ incidents, events }: AnalyticsProps) {
                 <Line
                   type="monotone"
                   dataKey="resolved"
-                  name="Критических решено"
+                  name="Решено и закрыто"
                   stroke="var(--color-mts-emerald)"
                   strokeDasharray="5 3"
                   strokeWidth={2}
@@ -245,7 +273,7 @@ function ActivityChart({ incidents, events }: AnalyticsProps) {
         </div>
       ) : (
         <p className="text-muted-foreground">
-          Для графика нужны даты создания инцидентов или история событий.
+          Для графика нужны даты создания инцидентов.
         </p>
       )}
 

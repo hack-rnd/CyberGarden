@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Archive,
   ArrowUpRight,
   ChevronLeft,
   ChevronRight,
@@ -56,11 +57,11 @@ export const statusLabels: Record<DashboardIncident["status"], string> = {
 };
 
 const statusBadgeClasses: Record<DashboardIncident["status"], string> = {
-  new: "border-mts-amber/35 bg-mts-amber/12 text-[#B8380E]",
-  waiting: "border-amber-400 bg-amber-100 text-amber-900",
+  new: "border-border bg-secondary text-foreground",
+  waiting: "border-border bg-secondary text-foreground",
   in_progress: "border-mts-blue/30 bg-mts-blue/10 text-[#005EC4]",
   investigation: "border-mts-blue/25 bg-mts-blue/10 text-[#005EC4]",
-  resolved: "border-mts-emerald/40 bg-mts-emerald/15 text-[#007A62]",
+  resolved: "border-mts-emerald/40 bg-mts-emerald/10 text-foreground",
   closed: "border-border bg-muted text-muted-foreground",
 };
 
@@ -169,9 +170,8 @@ function getIncidentRankTier(
 ): number {
   if (isActiveCritical(incident)) return 0;
 
-  if (!isIncidentActive(incident)) {
-    return incident.status === "resolved" ? 5 : 6;
-  }
+  if (incident.status === "resolved") return 5;
+  if (incident.status === "closed") return 6;
 
   if (isSlaBelowQuarter(incident, now)) return 1;
 
@@ -294,7 +294,10 @@ function computeSlaProgress(
   const percent = Math.round(ratio * 100);
 
   if (now >= deadline || percent >= 75) {
-    return { percent: Math.min(100, Math.max(75, percent)), barClass: "bg-mts-red" };
+    return {
+      percent: Math.min(100, Math.max(75, percent)),
+      barClass: "bg-mts-red",
+    };
   }
   if (percent >= 60) {
     return { percent, barClass: "bg-mts-amber" };
@@ -316,7 +319,7 @@ function ContextBadges({
   if (incident.isNeedUp) {
     badges.push({
       label: "Требует УП",
-      className: "border-mts-amber/40 bg-mts-amber/12 text-[#B8380E]",
+      className: "border-border bg-secondary text-foreground",
     });
   }
   if (incident.isMaster) {
@@ -348,7 +351,7 @@ function ContextBadges({
 
   return (
     <div
-      className={cn("flex flex-wrap gap-1", compact ? "mt-2" : "mt-2")}
+      className={cn("flex flex-wrap gap-1", compact ? "mt-1.5" : "mt-2")}
       aria-label="Атрибуты инцидента"
     >
       {badges.map(({ label, className }) => (
@@ -378,6 +381,14 @@ function SlaTimer({
   resolvedAt?: number | null;
   showBar?: boolean;
 }) {
+  if (incident.status === "investigation") {
+    return (
+      <span className="text-label-sm font-medium text-[#005EC4] whitespace-nowrap">
+        Этап RCA
+      </span>
+    );
+  }
+
   const deadline = deadlineFor(incident);
 
   if (!isIncidentActive(incident)) {
@@ -419,7 +430,7 @@ function SlaTimer({
   const progress = showBar ? computeSlaProgress(incident, now, deadline) : null;
 
   return (
-    <div className="inline-flex min-w-[92px] flex-col gap-1">
+    <div className="inline-flex min-w-[84px] flex-col gap-1">
       {seconds <= 0 ? (
         <span className={emphasis}>Просрочен</span>
       ) : (
@@ -500,17 +511,17 @@ function GroupTags({
   return (
     <ul
       aria-label={currentGroup ? "Другие группы" : "Группы инцидента"}
-      className="flex flex-wrap gap-1.5"
+      className="flex flex-wrap gap-1"
     >
       {tags.map(({ id, title, marker }) => (
         <li key={id}>
           <Badge
             variant="outline"
-            className="h-auto rounded-pill px-2 py-0.5 text-label-sm whitespace-normal"
+            className="h-auto rounded-pill px-2 py-0.5 text-[11px] whitespace-nowrap"
           >
             <span
               aria-hidden="true"
-              className={`size-2 shrink-0 rounded-pill ${marker}`}
+              className={`size-1.5 shrink-0 rounded-pill ${marker}`}
             />
             {title}
           </Badge>
@@ -530,7 +541,7 @@ function IncidentDate({ createdAt }: { createdAt?: string | null }) {
     <time
       dateTime={new Date(timestamp).toISOString()}
       title="Московское время"
-      className="whitespace-nowrap"
+      className="whitespace-nowrap text-label-sm"
     >
       {dateFormat.format(timestamp)}
     </time>
@@ -548,7 +559,7 @@ function IncidentStatus({
     return (
       <Badge
         variant="outline"
-        className="h-auto rounded-pill border-mts-emerald bg-mts-emerald/15 px-2.5 py-1 text-label-sm font-semibold text-[#007A62]"
+        className="h-auto rounded-pill border-mts-emerald bg-mts-emerald/10 px-2.5 py-0.5 text-label-sm font-semibold text-foreground"
       >
         Критический решён
       </Badge>
@@ -558,7 +569,7 @@ function IncidentStatus({
     <Badge
       variant="outline"
       className={cn(
-        "h-auto rounded-pill px-2.5 py-1 text-label-sm whitespace-nowrap",
+        "h-auto rounded-pill px-2.5 py-0.5 text-label-sm whitespace-nowrap",
         statusBadgeClasses[incident.status],
       )}
     >
@@ -570,10 +581,27 @@ function IncidentStatus({
 function ArchiveButton({
   id,
   onArchive,
+  compact = false,
 }: {
   id: string;
   onArchive: (id: string) => void;
+  compact?: boolean;
 }) {
+  if (compact) {
+    return (
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        title="Скрыть в архив"
+        aria-label={`Скрыть в архив: ${id}`}
+        className="size-8 rounded-control text-muted-foreground hover:text-foreground"
+        onClick={() => onArchive(id)}
+      >
+        <Archive className="size-4" aria-hidden="true" />
+      </Button>
+    );
+  }
   return (
     <Button
       type="button"
@@ -591,9 +619,11 @@ type OpenDetails = (id: string, event: MouseEvent<HTMLButtonElement>) => void;
 function DetailsButton({
   id,
   onOpenDetails,
+  compact = false,
 }: {
   id: string;
   onOpenDetails: OpenDetails;
+  compact?: boolean;
 }) {
   return (
     <Button
@@ -601,7 +631,7 @@ function DetailsButton({
       variant="outline"
       aria-haspopup="dialog"
       aria-label={`Детали инцидента ${id}`}
-      className="h-9 rounded-control px-3"
+      className={compact ? "h-8 rounded-control px-2.5 text-label-sm" : "h-9 rounded-control px-3"}
       onClick={(event) => onOpenDetails(id, event)}
     >
       Детали
@@ -612,10 +642,27 @@ function DetailsButton({
 function EditButton({
   id,
   onEditProcess,
+  compact = false,
 }: {
   id: string;
   onEditProcess: OpenDetails;
+  compact?: boolean;
 }) {
+  if (compact) {
+    return (
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        title="Редактировать локальный процесс"
+        aria-label={`Редактировать инцидент ${id}`}
+        className="size-8 rounded-control text-muted-foreground hover:text-foreground"
+        onClick={(event) => onEditProcess(id, event)}
+      >
+        <Pencil className="size-3.5" aria-hidden="true" />
+      </Button>
+    );
+  }
   return (
     <Button
       type="button"
@@ -644,25 +691,27 @@ function AssigneeCell({
     : "";
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-1.5">
       {employee ? (
         <div>
-          <p className="font-medium text-foreground">{employee}</p>
+          <p className="text-label-md font-medium text-foreground">{employee}</p>
           {team && <p className="text-label-sm text-muted-foreground">{team}</p>}
         </div>
       ) : (
         <>
-          <p className="font-semibold text-[#B8380E]">Исполнитель не указан</p>
-          {team && <p className="text-label-sm text-muted-foreground">{team}</p>}
+          <p className="text-label-sm font-medium text-muted-foreground">
+            Исполнитель не указан
+          </p>
+          {team && <p className="text-[11px] text-muted-foreground">{team}</p>}
           {incident.status !== "closed" && (
             <Button
               type="button"
               variant="outline"
-              className="h-8 rounded-control border-mts-red/40 bg-card px-2.5 text-label-sm font-medium text-mts-crimson transition-all duration-200 hover:bg-mts-red hover:text-white active:scale-[0.98]"
+              className="h-7 rounded-control border-mts-red/40 bg-card px-2 text-[12px] font-medium text-mts-crimson transition-all duration-200 hover:bg-mts-red hover:text-white active:scale-[0.98]"
               onClick={(event) => onAssign(incident.id, event)}
             >
               <UserPlus className="size-3.5" aria-hidden="true" />
-              Указать исполнителя
+              Указать
             </Button>
           )}
         </>
@@ -682,6 +731,7 @@ function IncidentCard({
   onOpenDetails,
   onAssign,
   onEditProcess,
+  canEdit,
 }: {
   incident: DashboardIncident;
   currentGroup: IncidentGroupId;
@@ -691,6 +741,7 @@ function IncidentCard({
   onOpenDetails: OpenDetails;
   onAssign: OpenDetails;
   onEditProcess?: OpenDetails;
+  canEdit: boolean;
 }) {
   const criticalActive = isActiveCritical(incident);
   const isResolved = resolvedAt !== undefined || incident.status === "resolved";
@@ -698,7 +749,7 @@ function IncidentCard({
   return (
     <article
       className={cn(
-        "space-y-4 rounded-panel border bg-card p-6 transition-all duration-200 hover:shadow-[0_4px_16px_rgba(29,32,35,0.08)] motion-safe:hover:-translate-y-1 motion-reduce:transition-none",
+        "space-y-4 rounded-panel border bg-card p-6 transition-all duration-200 hover:shadow-[0_4px_16px_rgba(29,32,35,0.08)] motion-safe:hover:-translate-y-0.5 motion-reduce:transition-none",
         criticalActive && "border-l-4 border-l-mts-red bg-mts-red/[0.02]",
         !criticalActive && isResolved && "border-l-4 border-l-mts-emerald",
       )}
@@ -752,7 +803,7 @@ function IncidentCard({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <DetailsButton id={incident.id} onOpenDetails={onOpenDetails} />
-          {onEditProcess && (
+          {canEdit && onEditProcess && (
             <EditButton id={incident.id} onEditProcess={onEditProcess} />
           )}
           <ArchiveButton id={incident.id} onArchive={onArchive} />
@@ -777,6 +828,7 @@ export function IncidentViews({
   isManualProcess,
   selectedIsServerBacked,
   onClose,
+  onAssigned,
   restoreFocus,
   aiControls,
   page,
@@ -795,6 +847,7 @@ export function IncidentViews({
   isManualProcess?: (id: string) => boolean;
   selectedIsServerBacked?: boolean;
   onClose: () => void;
+  onAssigned?: (message: string) => void;
   restoreFocus: () => void;
   aiControls: AiAnalysisControls;
   page: number;
@@ -807,7 +860,6 @@ export function IncidentViews({
   const [autoAssignId, setAutoAssignId] = useState<string | null>(null);
   const [dismissedWaitingIds, setDismissedWaitingIds] = useState<string[]>([]);
   const resolvedAt = selected ? criticalResolutions.get(selected.id) : undefined;
-  void isManualProcess;
 
   const openDetailsOnly: OpenDetails = (id, event) => {
     setAutoAssignId(null);
@@ -935,6 +987,10 @@ export function IncidentViews({
         setAutoAssignId(null);
         onClose();
       }}
+      onAssigned={(message) => {
+        setAutoAssignId(null);
+        onAssigned?.(message);
+      }}
       restoreFocus={restoreFocus}
       aiControls={aiControls}
     />
@@ -944,11 +1000,11 @@ export function IncidentViews({
     <aside
       role="status"
       aria-live="polite"
-      className="fixed right-4 bottom-4 z-40 w-[calc(100%-2rem)] max-w-md rounded-panel border border-l-4 border-l-mts-amber bg-card p-4 text-card-foreground shadow-[0_4px_16px_rgba(29,32,35,0.08)]"
+      className="fixed right-4 bottom-4 z-40 w-[calc(100%-2rem)] max-w-md rounded-panel border border-border border-l-4 border-l-mts-amber bg-card p-4 text-card-foreground shadow-[0_4px_16px_rgba(29,32,35,0.08)]"
     >
       <div className="flex items-start justify-between gap-2">
         <div className="space-y-1">
-          <p className="text-label-md font-bold text-[#B8380E]">
+          <p className="text-label-md font-bold text-foreground">
             Инцидент в ожидании без действий
           </p>
           <p className="text-label-md text-foreground">
@@ -1069,7 +1125,7 @@ export function IncidentViews({
         >
           <Table
             aria-label="Инциденты, время создания по Москве"
-            className="min-w-[1040px]"
+            className="min-w-[960px]"
           >
             <TableHeader className="bg-background">
               <TableRow>
@@ -1083,9 +1139,9 @@ export function IncidentViews({
                   "Приоритет",
                   "Группы",
                   "Создан",
-                  "ИИ-риск",
+                  "Риск",
                 ].map((label) => (
-                  <TableHead key={label} scope="col" className="px-3 py-3">
+                  <TableHead key={label} scope="col" className="px-2.5 py-2.5 text-label-sm">
                     {label}
                   </TableHead>
                 ))}
@@ -1098,6 +1154,7 @@ export function IncidentViews({
                 const urgentSla = isSlaBelowQuarter(incident, now);
                 const isResolved =
                   rowResolvedAt !== undefined || incident.status === "resolved";
+                const canEdit = Boolean(isManualProcess?.(incident.id));
 
                 return (
                   <TableRow
@@ -1106,15 +1163,14 @@ export function IncidentViews({
                     data-incident-id={incident.id}
                     className={cn(
                       "scroll-mt-24 transition-colors duration-200",
-                      criticalActive && "bg-mts-red/[0.05]",
-                      !criticalActive && urgentSla && "bg-mts-amber/[0.04]",
+                      criticalActive && "critical-row-pulse",
                       incident.id === highlightedIncidentId && "bg-mts-red/15",
                     )}
                   >
                     <th
                       scope="row"
                       className={cn(
-                        "px-3 py-3 text-left font-medium whitespace-nowrap",
+                        "px-2.5 py-2.5 text-left text-label-md font-medium whitespace-nowrap",
                         criticalActive &&
                           "border-l-4 border-l-mts-red font-semibold text-mts-crimson",
                         !criticalActive &&
@@ -1138,41 +1194,44 @@ export function IncidentViews({
                         )}
                       </div>
                     </th>
-                    <TableCell className="max-w-[200px] px-3 py-3 font-medium whitespace-normal">
+                    <TableCell className="max-w-[180px] px-2.5 py-2.5 text-label-md font-medium whitespace-normal">
                       <div>{incident.product}</div>
                       <ContextBadges incident={incident} compact />
                     </TableCell>
-                    <TableCell className="px-3 py-3">
-                      <div className="flex flex-col items-start gap-1.5">
+                    <TableCell className="px-2.5 py-2.5">
+                      <div className="flex items-center gap-1">
                         <DetailsButton
                           id={incident.id}
                           onOpenDetails={openDetailsOnly}
+                          compact
                         />
-                        {onEditProcess && (
+                        {canEdit && onEditProcess && (
                           <EditButton
                             id={incident.id}
                             onEditProcess={onEditProcess}
+                            compact
                           />
                         )}
                         <ArchiveButton
                           id={incident.id}
                           onArchive={onArchive}
+                          compact
                         />
                       </div>
                     </TableCell>
-                    <TableCell className="min-w-[210px] max-w-[240px] px-3 py-3 whitespace-normal">
+                    <TableCell className="min-w-[175px] max-w-[210px] px-2.5 py-2.5 whitespace-normal">
                       <AssigneeCell
                         incident={incident}
                         onAssign={openDetailsForAssign}
                       />
                     </TableCell>
-                    <TableCell className="px-3 py-3">
+                    <TableCell className="px-2.5 py-2.5">
                       <IncidentStatus
                         incident={incident}
                         resolvedAt={rowResolvedAt}
                       />
                     </TableCell>
-                    <TableCell className="px-3 py-3">
+                    <TableCell className="px-2.5 py-2.5">
                       <SlaTimer
                         incident={incident}
                         now={now}
@@ -1182,19 +1241,19 @@ export function IncidentViews({
                     </TableCell>
                     <TableCell
                       className={cn(
-                        "px-3 py-3 whitespace-nowrap",
+                        "px-2.5 py-2.5 text-label-md whitespace-nowrap",
                         criticalActive && "font-semibold text-mts-crimson",
                       )}
                     >
                       {incident.priority ? priorityLabels[incident.priority] : "—"}
                     </TableCell>
-                    <TableCell className="min-w-40 px-3 py-3">
+                    <TableCell className="min-w-[130px] px-2.5 py-2.5">
                       <GroupTags incident={incident} />
                     </TableCell>
-                    <TableCell className="px-3 py-3">
+                    <TableCell className="px-2.5 py-2.5">
                       <IncidentDate createdAt={incident.createdAt} />
                     </TableCell>
-                    <TableCell className="px-3 py-3 whitespace-nowrap">
+                    <TableCell className="px-2.5 py-2.5 text-label-md font-medium whitespace-nowrap tabular-nums">
                       {incident.ai ? `${incident.ai.riskScore}%` : "—"}
                     </TableCell>
                   </TableRow>
@@ -1306,6 +1365,7 @@ export function IncidentViews({
                         onOpenDetails={openDetailsOnly}
                         onAssign={openDetailsForAssign}
                         onEditProcess={onEditProcess}
+                        canEdit={Boolean(isManualProcess?.(incident.id))}
                       />
                     </li>
                   ))}

@@ -1,15 +1,22 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { LoaderCircle, Sparkles } from "lucide-react";
+import { LoaderCircle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { manualProcessAnalysis, manualProcessInput } from "@/lib/manual-process";
-import { getManualProcessSnapshot, readManualProcesses, saveManualProcessAnalysis } from "@/lib/manual-process-storage";
+import {
+  getManualProcessSnapshot,
+  readManualProcesses,
+  saveManualProcessAnalysis,
+} from "@/lib/manual-process-storage";
 import type { IncidentAiData, NormalizedIncident } from "@/types/incident";
 
-type DigestConcern = Pick<IncidentAiData, "riskScore" | "riskLevel" | "summary" | "recommendedTeam">
-  & Pick<NormalizedIncident, "code" | "product"> & {
+type DigestConcern = Pick<
+  IncidentAiData,
+  "riskScore" | "riskLevel" | "summary" | "recommendedTeam"
+> &
+  Pick<NormalizedIncident, "code" | "product"> & {
     incidentId: NormalizedIncident["id"];
     willBreachSla: boolean;
   };
@@ -31,7 +38,10 @@ export function useDashboardAi() {
   const digest = useQuery({
     queryKey: digestKey,
     queryFn: async ({ signal }): Promise<AiDigest | null> => {
-      const response = await fetch("/api/ai/digest", { cache: "no-store", signal });
+      const response = await fetch("/api/ai/digest", {
+        cache: "no-store",
+        signal,
+      });
       if (response.status === 404) return null;
       if (!response.ok) throw new Error("Не удалось загрузить сводку ИИ.");
       return response.json();
@@ -42,28 +52,36 @@ export function useDashboardAi() {
   const analysis = useMutation({
     mutationFn: async (incidentId: string | null) => {
       const manualProcess = incidentId?.startsWith("PR-")
-        ? readManualProcesses(getManualProcessSnapshot()).find(({ id }) => id === incidentId)
+        ? readManualProcesses(getManualProcessSnapshot()).find(
+            ({ id }) => id === incidentId,
+          )
         : undefined;
       const response = await fetch("/api/ai/analyze", {
         method: "POST",
         ...(incidentId && {
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(manualProcess
-            ? { manualProcess: manualProcessInput.parse(manualProcess) }
-            : { incidentId }),
+          body: JSON.stringify(
+            manualProcess
+              ? { manualProcess: manualProcessInput.parse(manualProcess) }
+              : { incidentId },
+          ),
         }),
       });
       if (response.status === 404) {
-        throw new Error(incidentId
-          ? "Сервис ИИ недоступен или инцидент больше не найден."
-          : "Сервис ИИ пока недоступен.");
+        throw new Error(
+          incidentId
+            ? "Сервис ИИ недоступен или инцидент больше не найден."
+            : "Сервис ИИ пока недоступен.",
+        );
       }
       if (!response.ok) throw new Error("Не удалось выполнить анализ ИИ.");
       if (manualProcess) {
         const result = await response.json();
-        const analysis = manualProcessAnalysis.safeParse(result.ai);
-        if (!analysis.success) throw new Error("Сервис ИИ вернул некорректный результат.");
-        saveManualProcessAnalysis(manualProcess, analysis.data);
+        const parsed = manualProcessAnalysis.safeParse(result.ai);
+        if (!parsed.success) {
+          throw new Error("Сервис ИИ вернул некорректный результат.");
+        }
+        saveManualProcessAnalysis(manualProcess, parsed.data);
         return "manual";
       }
     },
@@ -82,7 +100,8 @@ export function useDashboardAi() {
 export type AiAnalysisControls = ReturnType<typeof useDashboardAi>["analysis"];
 
 export function AnalyzeButton({
-  controls, incidentId = null,
+  controls,
+  incidentId = null,
 }: {
   controls: AiAnalysisControls;
   incidentId?: string | null;
@@ -96,9 +115,11 @@ export function AnalyzeButton({
       <Button
         type="button"
         variant={isIncidentAnalysis ? "default" : "outline"}
-        className={isIncidentAnalysis
-          ? "min-h-11 w-full gap-2 rounded-control bg-mts-crimson px-5 text-base font-semibold text-white hover:bg-mts-wine sm:w-auto"
-          : "min-h-10 rounded-control"}
+        className={
+          isIncidentAnalysis
+            ? "min-h-11 w-full gap-2 rounded-control bg-mts-red px-5 text-label-md font-semibold text-white hover:bg-mts-crimson sm:w-auto"
+            : "min-h-10 rounded-control"
+        }
         disabled={controls.isPending}
         aria-busy={pending}
         onClick={() => controls.mutate(incidentId)}
@@ -106,18 +127,21 @@ export function AnalyzeButton({
         {pending && (
           <LoaderCircle
             aria-hidden="true"
-            className="motion-safe:animate-spin"
+            className="size-4 motion-safe:animate-spin"
             style={{ animationDuration: "400ms" }}
           />
         )}
-        {isIncidentAnalysis && !pending && <Sparkles aria-hidden="true" className="size-5" />}
-        {pending ? "Анализируем…" : "Анализ AI"}
+        {pending ? "Анализируем…" : "Обновить ИИ-анализ"}
       </Button>
       {isCurrent && controls.isError && (
-        <p role="alert" className="text-label-sm text-mts-ink">{controls.error.message}</p>
+        <p role="alert" className="text-label-sm text-mts-crimson">
+          {controls.error.message}
+        </p>
       )}
       {isCurrent && controls.isSuccess && (
-        <p role="status" className="text-label-sm text-muted-foreground">Анализ завершён.</p>
+        <p role="status" className="text-label-sm text-muted-foreground">
+          Анализ завершён.
+        </p>
       )}
     </div>
   );

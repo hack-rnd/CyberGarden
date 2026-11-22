@@ -46,6 +46,12 @@ function catalogMatch(value: string, options: readonly string[]) {
     ?? options.find((option) => option.trim().toLocaleLowerCase("ru") === typed);
 }
 
+function normalizeDeadlineIso(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
+}
+
 function CatalogField({ label, name, value, options, required }: {
   label: string;
   name: "product" | "assigneeTeam";
@@ -81,11 +87,13 @@ function ProcessSelect({ label, name, value, options }: {
   options: Readonly<Record<string, string>>;
 }) {
   const id = useId();
+  const [selected, setSelected] = useState(value);
 
   return (
     <div className={fieldClass}>
       <label htmlFor={id}>{label}</label>
-      <Select name={name} defaultValue={value}>
+      <input type="hidden" name={name} value={selected} />
+      <Select value={selected} onValueChange={setSelected}>
         <SelectTrigger id={id} className={selectTriggerClass}>
           <SelectValue />
         </SelectTrigger>
@@ -97,9 +105,9 @@ function ProcessSelect({ label, name, value, options }: {
           className={selectContentClass}
         >
           <SelectGroup>
-            {Object.entries(options).map(([value, label]) => (
-              <SelectItem key={value} value={value} className="whitespace-normal">
-                {label}
+            {Object.entries(options).map(([optionValue, optionLabel]) => (
+              <SelectItem key={optionValue} value={optionValue} className="whitespace-normal">
+                {optionLabel}
               </SelectItem>
             ))}
           </SelectGroup>
@@ -191,30 +199,33 @@ function ProcessForm({ process, products, assignees, onSave }: {
   onSave: (fields: ProcessFields, id?: string) => void;
 } & ProcessCatalog) {
   const [error, setError] = useState("");
-  const initialDeadline = process?.slaDeadline
+  const initialDeadline = process?.slaDeadline && Number.isFinite(Date.parse(process.slaDeadline))
     ? moscowTime.format(new Date(process.slaDeadline)).replace(" ", "T")
     : "";
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const product = catalogMatch(String(data.get("product") ?? "").trim(), products);
+    const typedProduct = String(data.get("product") ?? "").trim();
+    const product = catalogMatch(typedProduct, products) ?? typedProduct;
     if (!product) {
-      setError("Выберите существующий продукт из списка.");
+      setError("Укажите название продукта.");
       return;
     }
     const typedAssignee = String(data.get("assigneeTeam") ?? "").trim();
-    const assignee = typedAssignee ? catalogMatch(typedAssignee, assignees) : "";
-    if (assignee === undefined) {
-      setError("Выберите существующего исполнителя из списка или оставьте поле пустым.");
-      return;
-    }
+    const assignee = typedAssignee
+      ? (catalogMatch(typedAssignee, assignees) ?? typedAssignee)
+      : "";
     const deadline = data.get("slaDeadline");
     const timestamp = typeof deadline === "string" && deadline ? Date.parse(`${deadline}:00+03:00`) : null;
     if (timestamp !== null && !Number.isFinite(timestamp)) {
       setError("Укажите корректные дату и время SLA.");
       return;
     }
+    const normalizedDeadline = deadline === initialDeadline
+      ? normalizeDeadlineIso(process?.slaDeadline)
+      : timestamp === null ? null : new Date(timestamp).toISOString();
+
     const result = manualProcessFields.safeParse({
       product,
       description: data.get("description"),
@@ -222,15 +233,19 @@ function ProcessForm({ process, products, assignees, onSave }: {
       priority: data.get("priority"),
       status: data.get("status"),
       groups: data.getAll("groups"),
-      slaDeadline: deadline === initialDeadline
-        ? process?.slaDeadline ?? null
-        : timestamp === null ? null : new Date(timestamp).toISOString(),
+      slaDeadline: normalizedDeadline,
       itsmUrl: data.get("itsmUrl"),
     });
     if (!result.success) {
-      setError(result.error.issues.some((issue) => issue.path[0] === "itsmUrl")
-        ? "Введите полную ссылку на запись ITSM, начинающуюся с http:// или https://."
-        : "Проверьте название процесса и значения полей.");
+      const itsmIssue = result.error.issues.some((issue) => issue.path[0] === "itsmUrl");
+      if (itsmIssue) {
+        setError("Введите полную ссылку на запись ITSM, начинающуюся с http:// или https://.");
+      } else {
+        const details = result.error.issues
+          .map((issue) => `${issue.path.join(".") || "поле"}: ${issue.message}`)
+          .join("; ");
+        setError(`Проверьте значения полей (${details}).`);
+      }
       return;
     }
     try {

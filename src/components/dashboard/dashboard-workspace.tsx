@@ -4,6 +4,8 @@ import {
   Archive,
   ArrowDown,
   BarChart3,
+  Check,
+  ClipboardCopy,
   Download,
   Eye,
   EyeOff,
@@ -12,6 +14,7 @@ import {
   Plus,
   Search,
   Upload,
+  UserX,
   X,
 } from "lucide-react";
 import Image from "next/image";
@@ -95,6 +98,15 @@ const moscowDateFormat = new Intl.DateTimeFormat("ru-RU", {
   timeZone: "Europe/Moscow",
 });
 
+const handoffTimeFormat = new Intl.DateTimeFormat("ru-RU", {
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  timeZone: "Europe/Moscow",
+});
+
 type DashboardWorkspaceProps = {
   incidents?: readonly DashboardIncident[];
   newIncidentIds?: readonly string[];
@@ -173,6 +185,123 @@ function splitClockParts(now: number | null): {
   };
 }
 
+function MonitorIncidentRow({
+  incident,
+  now,
+  isCrit,
+  onSelect,
+}: {
+  incident: DashboardIncident;
+  now: number | null;
+  isCrit: boolean;
+  onSelect: (id: string) => void;
+}) {
+  const slaText = formatMonitorSla(incident, now);
+  const slaPct = computeMonitorSlaPct(incident, now);
+  const isBreached = slaText === "ПРОСРОЧЕН";
+  const hasAssignee = Boolean(incident.assigneeEmployee?.trim());
+
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={() => onSelect(incident.id)}
+        className={cn(
+          "grid w-full cursor-pointer grid-cols-1 items-center gap-3 rounded-panel border border-l-4 px-5 py-3.5 text-left transition-colors duration-150 lg:grid-cols-12",
+          isCrit
+            ? "border-[#5A1E2B] border-l-mts-red bg-[#16191D]/90 hover:bg-[#1C2026]"
+            : !hasAssignee
+              ? "border-[#2B313B] border-l-[#EB4A13] bg-[#16191D] hover:bg-[#1C2026]"
+              : "border-[#242830] border-l-[#007CFF] bg-[#16191D] hover:bg-[#1C2026]",
+        )}
+      >
+        <div className="flex flex-wrap items-center gap-2 lg:col-span-2">
+          <span
+            className={cn(
+              "font-heading text-label-md font-semibold tabular-nums",
+              isCrit ? "text-mts-red" : "text-white",
+            )}
+          >
+            {incident.id}
+          </span>
+          {isCrit && (
+            <span className="rounded-pill bg-mts-red px-2 py-0.5 text-[10px] font-bold tracking-wide text-white uppercase">
+              Критический
+            </span>
+          )}
+        </div>
+
+        <div className="min-w-0 lg:col-span-2">
+          <p className="truncate font-semibold text-white">
+            {incident.product}
+          </p>
+          <p className="text-[11px] text-[#8F98A3]">
+            {incident.serviceType || "IT-сервис"}
+            {incident.isMaster ? " · Мастер-МИ" : ""}
+          </p>
+        </div>
+
+        <div className="min-w-0 lg:col-span-4">
+          <p className="line-clamp-1 text-label-md font-medium text-[#F5F7FA]">
+            {incident.title || incident.description}
+          </p>
+          <p className="line-clamp-1 text-label-sm text-[#8F98A3]">
+            {incident.description}
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 lg:col-span-2">
+          {hasAssignee ? (
+            <div className="min-w-0">
+              <p className="truncate text-label-sm font-medium text-[#F5F7FA]">
+                {incident.assigneeEmployee}
+              </p>
+              <p className="truncate text-[11px] text-[#8F98A3]">
+                {incident.assigneeTeam}
+              </p>
+            </div>
+          ) : (
+            <span className="rounded-control border border-[#3A414D] bg-[#1C2026] px-2.5 py-1 text-label-sm font-medium text-[#E4E8EE]">
+              Исполнитель не указан
+            </span>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between gap-3 lg:col-span-2 lg:flex-col lg:items-end lg:gap-1.5">
+          <span className="rounded-pill border border-[#303640] bg-[#1C2026] px-2.5 py-0.5 text-[11px] font-medium text-[#E4E8EE]">
+            {statusLabels[incident.status]}
+          </span>
+          <div className="flex flex-col items-end gap-1">
+            <span
+              className={cn(
+                "font-heading text-body-md font-semibold tabular-nums",
+                isCrit || isBreached ? "text-mts-red" : "text-[#00C19B]",
+              )}
+            >
+              {slaText}
+            </span>
+            {slaPct !== null && (
+              <div className="h-1.5 w-24 overflow-hidden rounded-pill bg-[#2B313B]">
+                <div
+                  className={cn(
+                    "h-full rounded-pill",
+                    isCrit || isBreached || slaPct >= 75
+                      ? "bg-mts-red"
+                      : slaPct >= 60
+                        ? "bg-[#EB4A13]"
+                        : "bg-[#00A887]",
+                  )}
+                  style={{ width: `${slaPct}%` }}
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      </button>
+    </li>
+  );
+}
+
 // --- WORKSPACE ---
 
 export function DashboardWorkspace({
@@ -189,7 +318,9 @@ export function DashboardWorkspace({
   const [incidentStatus, setIncidentStatus] = useState(ALL_VALUE);
   const [sla, setSla] = useState("");
   const [showClosed, setShowClosed] = useState(false);
+  const [unassignedOnly, setUnassignedOnly] = useState(false);
   const [monitorMode, setMonitorMode] = useState(false);
+  const [handoffCopied, setHandoffCopied] = useState(false);
   const [view, setView] = useState<(typeof views)[number]["value"]>("table");
   const [page, setPage] = useState(1);
   const [incidentJump, setIncidentJump] = useState<{ id: string } | null>(null);
@@ -237,6 +368,7 @@ export function DashboardWorkspace({
   const [archiveNotice, setArchiveNotice] = useState<{ code: string } | null>(
     null,
   );
+  const [assignmentNotice, setAssignmentNotice] = useState<string | null>(null);
   const [processEditor, setProcessEditor] = useState<ProcessEditorState | null>(
     null,
   );
@@ -263,6 +395,12 @@ export function DashboardWorkspace({
     const timeout = window.setTimeout(() => setArchiveNotice(null), 5000);
     return () => window.clearTimeout(timeout);
   }, [archiveNotice]);
+
+  useEffect(() => {
+    if (!assignmentNotice) return;
+    const timeout = window.setTimeout(() => setAssignmentNotice(null), 5500);
+    return () => window.clearTimeout(timeout);
+  }, [assignmentNotice]);
 
   useEffect(() => {
     if (!uploadStatus) return;
@@ -394,6 +532,7 @@ export function DashboardWorkspace({
   function handleSelectGroup(group: IncidentGroupId | null) {
     setSelectedGroup(group);
     setRisksOnly(false);
+    setUnassignedOnly(false);
     setPage(1);
     if (group !== null) scrollToElement("incident-list");
   }
@@ -406,6 +545,7 @@ export function DashboardWorkspace({
       setIncidentStatus(ALL_VALUE);
       setSla("");
       setQuery("");
+      setUnassignedOnly(false);
       setView("table");
       setRisksOnly(true);
       setPage(1);
@@ -424,6 +564,7 @@ export function DashboardWorkspace({
     setSla("");
     setSelectedGroup(null);
     setRisksOnly(false);
+    setUnassignedOnly(false);
     setPage(1);
   }
 
@@ -534,6 +675,14 @@ export function DashboardWorkspace({
       .map((incident) => incident.id),
   );
 
+  const unassignedActiveIncidents = (visibleIncidents ?? []).filter(
+    (incident) =>
+      incident.status !== "closed" &&
+      incident.status !== "resolved" &&
+      !incident.assigneeEmployee?.trim(),
+  );
+  const unassignedCount = unassignedActiveIncidents.length;
+
   const closedCount = (visibleIncidents ?? []).filter(
     (incident) => incident.status === "closed",
   ).length;
@@ -560,7 +709,8 @@ export function DashboardWorkspace({
       incidentStatus !== ALL_VALUE ||
       sla ||
       selectedGroup ||
-      showRisksOnly,
+      showRisksOnly ||
+      unassignedOnly,
   );
 
   const metrics =
@@ -600,6 +750,10 @@ export function DashboardWorkspace({
   const tableMatches = visibleIncidents?.filter(
     (incident) =>
       (includeClosed || incident.status !== "closed") &&
+      (!unassignedOnly ||
+        (!incident.assigneeEmployee?.trim() &&
+          incident.status !== "closed" &&
+          incident.status !== "resolved")) &&
       (!search ||
         [incident.id, incident.product, incident.description].some((value) =>
           value.toLocaleLowerCase("ru").includes(search),
@@ -625,22 +779,31 @@ export function DashboardWorkspace({
       (incident.priority === "critical" || incident.groups.includes("CRITICAL")),
   );
 
-  const monitorIncomingIncidents = monitorMode
+  const monitorCriticalIncidents = monitorMode
+    ? sortIncidentsForTable(criticalIncidents, criticalResolutions, now)
+    : [];
+
+  const monitorCriticalIds = new Set(
+    monitorCriticalIncidents.map((incident) => incident.id),
+  );
+
+  const monitorOtherIncidents = monitorMode
     ? sortIncidentsForTable(
         (visibleIncidents ?? []).filter((incident) => {
-          if (incident.status === "closed" || incident.status === "resolved") {
+          if (
+            incident.status === "closed" ||
+            incident.status === "resolved" ||
+            monitorCriticalIds.has(incident.id)
+          ) {
             return false;
           }
-          const isCrit =
-            incident.priority === "critical" ||
-            incident.groups.includes("CRITICAL");
           const isUnassigned = !incident.assigneeEmployee?.trim();
           const createdMs = Date.parse(incident.createdAt ?? "");
           const isRecent =
             now === null ||
             (Number.isFinite(createdMs) &&
               now - createdMs <= MONITOR_FRESH_WINDOW_MS);
-          return isCrit || isUnassigned || isRecent;
+          return isUnassigned || isRecent;
         }),
         criticalResolutions,
         now,
@@ -651,27 +814,25 @@ export function DashboardWorkspace({
     string,
     { product: string; level: "critical" | "degraded" | "ok"; count: number }
   >();
-  if (monitorMode) {
-    for (const incident of visibleIncidents ?? []) {
-      let existing = serviceHealthMap.get(incident.product);
-      if (!existing) {
-        existing = { product: incident.product, level: "ok", count: 0 };
-        serviceHealthMap.set(incident.product, existing);
-      }
-      const isOpen =
-        incident.status !== "closed" &&
-        incident.status !== "resolved" &&
-        incident.status !== "investigation";
-      if (isOpen) {
-        existing.count++;
-        const isCrit =
-          incident.priority === "critical" ||
-          incident.groups.includes("CRITICAL");
-        if (isCrit) {
-          existing.level = "critical";
-        } else if (existing.level !== "critical") {
-          existing.level = "degraded";
-        }
+  for (const incident of visibleIncidents ?? []) {
+    let existing = serviceHealthMap.get(incident.product);
+    if (!existing) {
+      existing = { product: incident.product, level: "ok", count: 0 };
+      serviceHealthMap.set(incident.product, existing);
+    }
+    const isOpen =
+      incident.status !== "closed" &&
+      incident.status !== "resolved" &&
+      incident.status !== "investigation";
+    if (isOpen) {
+      existing.count++;
+      const isCrit =
+        incident.priority === "critical" ||
+        incident.groups.includes("CRITICAL");
+      if (isCrit) {
+        existing.level = "critical";
+      } else if (existing.level !== "critical") {
+        existing.level = "degraded";
       }
     }
   }
@@ -686,6 +847,11 @@ export function DashboardWorkspace({
     .slice(0, 10);
 
   const clockParts = splitClockParts(now);
+
+  function openFromMonitor(id: string) {
+    setMonitorMode(false);
+    openDetails(id);
+  }
 
   function jumpToIncident(id: string) {
     const target = (visibleIncidents ?? []).find((item) => item.id === id);
@@ -714,6 +880,84 @@ export function DashboardWorkspace({
   const totalVisibleCount = (visibleIncidents ?? []).filter(
     (incident) => includeClosed || incident.status !== "closed",
   ).length;
+
+  async function copyShiftHandoff() {
+    const activeAll = (visibleIncidents ?? []).filter(
+      (item) => item.status !== "closed" && item.status !== "resolved",
+    );
+    const coordQueue = activeAll.filter((item) =>
+      item.groups.includes("ASSIGNED_TO_COORDINATORS"),
+    );
+    const burningSla = activeAll.filter(
+      (item) =>
+        item.status !== "investigation" &&
+        currentSlaStatus(item, now) !== "ok",
+    );
+    const degradedServices = serviceHealthItems.filter(
+      (item) => item.level !== "ok",
+    );
+
+    const lines: string[] = [
+      `СВОДКА ПЕРЕДАЧИ СМЕНЫ МТС · ${handoffTimeFormat.format(new Date())} МСК`,
+      `Активных: ${activeAll.length} | Критических: ${criticalIncidents.length} | На координаторах: ${coordQueue.length} | Без исполнителя: ${unassignedCount} | Риск/просрочка SLA: ${burningSla.length}`,
+      "",
+    ];
+
+    if (criticalIncidents.length > 0) {
+      lines.push("КРИТИЧЕСКИЕ ИНЦИДЕНТЫ:");
+      for (const item of criticalIncidents) {
+        lines.push(
+          `- ${item.id} · ${item.product} · ${item.assigneeEmployee || "Исполнитель не указан"} · SLA: ${formatMonitorSla(item, now)}`,
+        );
+      }
+      lines.push("");
+    }
+
+    if (coordQueue.length > 0) {
+      lines.push("НА КООРДИНАТОРАХ (ТРЕБУЮТ ПЕРЕДАЧИ):");
+      for (const item of coordQueue) {
+        lines.push(
+          `- ${item.id} · ${item.product} (${statusLabels[item.status]}) · ${item.assigneeEmployee || "Без исполнителя"}`,
+        );
+      }
+      lines.push("");
+    }
+
+    if (burningSla.length > 0) {
+      lines.push("ГОРЯЩИЕ / ПРОСРОЧЕННЫЕ SLA:");
+      for (const item of burningSla.slice(0, 8)) {
+        lines.push(
+          `- ${item.id} · ${item.product} · SLA: ${formatMonitorSla(item, now)}`,
+        );
+      }
+      lines.push("");
+    }
+
+    if (degradedServices.length > 0) {
+      lines.push("ПРОБЛЕМНЫЕ IT-СЕРВИСЫ:");
+      for (const svc of degradedServices) {
+        lines.push(
+          `- ${svc.product}: ${svc.level === "critical" ? "Сбой" : "Деградация"} (${svc.count} акт.)`,
+        );
+      }
+    }
+
+    const report = lines.join("\n").trim();
+    try {
+      await navigator.clipboard.writeText(report);
+      setHandoffCopied(true);
+      setUploadStatus({
+        kind: "ok",
+        text: "Сводка передачи смены скопирована — готова к отправке в МТС Link.",
+      });
+      window.setTimeout(() => setHandoffCopied(false), 2500);
+    } catch {
+      setUploadStatus({
+        kind: "error",
+        text: "Не удалось скопировать сводку в буфер обмена.",
+      });
+    }
+  }
 
   async function exportToExcel() {
     if (!incidents || !tableMatches || exporting) return;
@@ -820,7 +1064,7 @@ export function DashboardWorkspace({
               <div className="flex flex-wrap items-center gap-4">
                 <div
                   aria-label="Текущее московское время"
-                  className="flex items-center gap-4 rounded-control border border-[#2C313A] bg-[#0D0F12] px-4 py-2"
+                  className="flex select-none items-center gap-4 rounded-control border border-[#2C313A] bg-[#0D0F12] px-4 py-2"
                 >
                   <time className="flex items-baseline gap-1 font-heading leading-none tabular-nums">
                     <span className="text-[30px] font-semibold tracking-tight text-white">
@@ -858,6 +1102,36 @@ export function DashboardWorkspace({
           </div>
 
           <div className="flex-1 space-y-5 px-6 py-5 xl:px-10">
+            {monitorCriticalIncidents.length > 0 && (
+              <section
+                aria-labelledby="monitor-critical-title"
+                className="monitor-critical-pulse space-y-3 rounded-panel border-2 border-mts-red p-5"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h2
+                    id="monitor-critical-title"
+                    className="text-title-lg font-semibold text-white"
+                  >
+                    Критические инциденты ({monitorCriticalIncidents.length})
+                  </h2>
+                  <span className="rounded-pill bg-mts-red px-3 py-1 text-label-sm font-bold text-white">
+                    Закреплено · Требует немедленной реакции
+                  </span>
+                </div>
+                <ul className="space-y-2.5">
+                  {monitorCriticalIncidents.map((incident) => (
+                    <MonitorIncidentRow
+                      key={incident.id}
+                      incident={incident}
+                      now={now}
+                      isCrit
+                      onSelect={openFromMonitor}
+                    />
+                  ))}
+                </ul>
+              </section>
+            )}
+
             <ul className="grid grid-cols-2 gap-3 lg:grid-cols-4 xl:gap-4">
               {incidentGroups.map(({ id, title, marker }) => {
                 const count = metrics?.get(id)?.active ?? 0;
@@ -963,133 +1237,32 @@ export function DashboardWorkspace({
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h2 className="text-title-lg font-medium text-white">
                   Поток новых и активных инцидентов (
-                  {monitorIncomingIncidents.length})
+                  {monitorOtherIncidents.length})
                 </h2>
                 <span className="text-label-sm text-[#8F98A3]">
-                  Критические закреплены сверху · клик по строке откроет
-                  карточку
+                  Клик по строке откроет карточку инцидента
                 </span>
               </div>
 
-              {monitorIncomingIncidents.length > 0 ? (
+              {monitorOtherIncidents.length > 0 ? (
                 <ul className="space-y-2.5">
-                  {monitorIncomingIncidents.map((incident) => {
-                    const isCrit =
-                      incident.priority === "critical" ||
-                      incident.groups.includes("CRITICAL");
-                    const slaText = formatMonitorSla(incident, now);
-                    const slaPct = computeMonitorSlaPct(incident, now);
-                    const isBreached = slaText === "ПРОСРОЧЕН";
-                    const hasAssignee = Boolean(
-                      incident.assigneeEmployee?.trim(),
-                    );
-
-                    return (
-                      <li key={incident.id}>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setMonitorMode(false);
-                            openDetails(incident.id);
-                          }}
-                          className={cn(
-                            "grid w-full cursor-pointer grid-cols-1 items-center gap-3 rounded-panel border border-l-4 px-5 py-3.5 text-left transition-colors duration-150 lg:grid-cols-12",
-                            isCrit
-                              ? "monitor-critical-pulse border-l-mts-red"
-                              : !hasAssignee
-                                ? "border-[#2B313B] border-l-[#EB4A13] bg-[#16191D] hover:bg-[#1C2026]"
-                                : "border-[#242830] border-l-[#007CFF] bg-[#16191D] hover:bg-[#1C2026]",
-                          )}
-                        >
-                          <div className="flex flex-wrap items-center gap-2 lg:col-span-2">
-                            <span
-                              className={cn(
-                                "font-heading text-label-md font-semibold tabular-nums",
-                                isCrit ? "text-mts-red" : "text-white",
-                              )}
-                            >
-                              {incident.id}
-                            </span>
-                            {isCrit && (
-                              <span className="rounded-pill bg-mts-red px-2 py-0.5 text-[10px] font-bold tracking-wide text-white uppercase">
-                                Критический
-                              </span>
-                            )}
-                          </div>
-
-                          <div className="min-w-0 lg:col-span-2">
-                            <p className="truncate font-semibold text-white">
-                              {incident.product}
-                            </p>
-                            <p className="text-[11px] text-[#8F98A3]">
-                              {incident.serviceType || "IT-сервис"}
-                              {incident.isMaster ? " · Мастер-МИ" : ""}
-                            </p>
-                          </div>
-
-                          <div className="min-w-0 lg:col-span-4">
-                            <p className="line-clamp-1 text-label-md font-medium text-[#F5F7FA]">
-                              {incident.title || incident.description}
-                            </p>
-                            <p className="line-clamp-1 text-label-sm text-[#8F98A3]">
-                              {incident.description}
-                            </p>
-                          </div>
-
-                          <div className="flex flex-wrap items-center gap-2 lg:col-span-2">
-                            {hasAssignee ? (
-                              <div className="min-w-0">
-                                <p className="truncate text-label-sm font-medium text-[#F5F7FA]">
-                                  {incident.assigneeEmployee}
-                                </p>
-                                <p className="truncate text-[11px] text-[#8F98A3]">
-                                  {incident.assigneeTeam}
-                                </p>
-                              </div>
-                            ) : (
-                              <span className="rounded-control border border-[#EB4A13]/60 bg-[#261B16] px-2.5 py-1 text-label-sm font-semibold text-[#F5F7FA]">
-                                Исполнитель не указан
-                              </span>
-                            )}
-                          </div>
-
-                          <div className="flex items-center justify-between gap-3 lg:col-span-2 lg:flex-col lg:items-end lg:gap-1.5">
-                            <span className="rounded-pill border border-[#303640] bg-[#1C2026] px-2.5 py-0.5 text-[11px] font-medium text-[#E4E8EE]">
-                              {statusLabels[incident.status]}
-                            </span>
-                            <div className="flex flex-col items-end gap-1">
-                              <span
-                                className={cn(
-                                  "font-heading text-body-md font-semibold tabular-nums",
-                                  isCrit || isBreached
-                                    ? "text-mts-red"
-                                    : "text-[#00C19B]",
-                                )}
-                              >
-                                {slaText}
-                              </span>
-                              {slaPct !== null && (
-                                <div className="h-1.5 w-24 overflow-hidden rounded-pill bg-[#2B313B]">
-                                  <div
-                                    className={cn(
-                                      "h-full rounded-pill",
-                                      isBreached || slaPct >= 75
-                                        ? "bg-mts-red"
-                                        : slaPct >= 60
-                                          ? "bg-[#EB4A13]"
-                                          : "bg-[#00A887]",
-                                    )}
-                                    style={{ width: `${slaPct}%` }}
-                                  />
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </button>
-                      </li>
-                    );
-                  })}
+                  {monitorOtherIncidents.map((incident) => (
+                    <MonitorIncidentRow
+                      key={incident.id}
+                      incident={incident}
+                      now={now}
+                      isCrit={false}
+                      onSelect={openFromMonitor}
+                    />
+                  ))}
                 </ul>
+              ) : monitorCriticalIncidents.length > 0 ? (
+                <div className="rounded-panel border border-[#242830] bg-[#16191D] p-6 text-center">
+                  <p className="text-label-md text-[#8F98A3]">
+                    Других новых активных инцидентов нет — фокус на критических
+                    выше.
+                  </p>
+                </div>
               ) : (
                 <div className="rounded-panel border border-[#242830] bg-[#16191D] p-8 text-center">
                   <p className="font-heading text-title-lg text-[#00C19B]">
@@ -1103,27 +1276,57 @@ export function DashboardWorkspace({
       )}
 
       <div role="status" className="sr-only">
+        {assignmentNotice}
         {archiveNotice && `Инцидент ${archiveNotice.code} скрыт в архив.`}
       </div>
-      {!monitorMode && archiveNotice && (
-        <div className="fixed right-4 bottom-4 z-40 flex max-w-[calc(100%-2rem)] items-center gap-3 rounded-panel border border-l-4 border-l-mts-emerald bg-card p-3 text-card-foreground shadow-lg motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-2">
-          <Archive
-            className="size-5 shrink-0 text-mts-emerald"
-            aria-hidden="true"
-          />
-          <p className="wrap-break-word text-label-md">
-            Инцидент <strong>{archiveNotice.code}</strong> скрыт в архив.
-          </p>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="ml-auto shrink-0"
-            aria-label="Закрыть уведомление об архивации"
-            onClick={() => setArchiveNotice(null)}
-          >
-            <X aria-hidden="true" />
-          </Button>
+      {!monitorMode && (assignmentNotice || archiveNotice) && (
+        <div className="fixed right-4 bottom-4 z-50 flex max-w-[calc(100%-2rem)] flex-col gap-2 sm:max-w-md">
+          {assignmentNotice && (
+            <div
+              role="status"
+              className="flex items-center gap-3 rounded-panel border border-border border-l-4 border-l-mts-emerald bg-card p-3.5 text-card-foreground shadow-[0_4px_16px_rgba(29,32,35,0.12)] motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-2"
+            >
+              <Check
+                className="size-5 shrink-0 text-mts-emerald"
+                aria-hidden="true"
+              />
+              <p className="text-label-md text-foreground wrap-break-word">
+                {assignmentNotice}
+              </p>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="ml-auto size-8 shrink-0"
+                aria-label="Закрыть уведомление об отправке"
+                onClick={() => setAssignmentNotice(null)}
+              >
+                <X className="size-4" aria-hidden="true" />
+              </Button>
+            </div>
+          )}
+
+          {archiveNotice && (
+            <div className="flex items-center gap-3 rounded-panel border border-border border-l-4 border-l-mts-emerald bg-card p-3.5 text-card-foreground shadow-[0_4px_16px_rgba(29,32,35,0.12)] motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-2">
+              <Archive
+                className="size-5 shrink-0 text-mts-emerald"
+                aria-hidden="true"
+              />
+              <p className="text-label-md text-foreground wrap-break-word">
+                Инцидент <strong>{archiveNotice.code}</strong> скрыт в архив.
+              </p>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="ml-auto size-8 shrink-0"
+                aria-label="Закрыть уведомление об архивации"
+                onClick={() => setArchiveNotice(null)}
+              >
+                <X className="size-4" aria-hidden="true" />
+              </Button>
+            </div>
+          )}
         </div>
       )}
 
@@ -1226,6 +1429,11 @@ export function DashboardWorkspace({
                     Только риски эскалации
                   </span>
                 )}
+                {unassignedOnly && (
+                  <span className="font-medium text-foreground">
+                    Только без исполнителя
+                  </span>
+                )}
                 <span>
                   {matches
                     ? view === "groups"
@@ -1250,6 +1458,26 @@ export function DashboardWorkspace({
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
+              {unassignedCount > 0 && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  aria-pressed={unassignedOnly}
+                  className={cn(
+                    "h-10 rounded-control",
+                    unassignedOnly
+                      ? "border-mts-ink bg-mts-ink text-white hover:bg-mts-ink/90 hover:text-white"
+                      : "border-border bg-card text-foreground hover:border-mts-muted",
+                  )}
+                  onClick={() => {
+                    setUnassignedOnly((prev) => !prev);
+                    setPage(1);
+                  }}
+                >
+                  <UserX className="size-4" aria-hidden="true" />
+                  Без исполнителя ({unassignedCount})
+                </Button>
+              )}
               {closedCount > 0 && (
                 <Button
                   type="button"
@@ -1320,6 +1548,20 @@ export function DashboardWorkspace({
                 type="button"
                 variant="outline"
                 className="h-10 rounded-control"
+                onClick={copyShiftHandoff}
+                disabled={!visibleIncidents}
+              >
+                {handoffCopied ? (
+                  <Check className="size-4 text-mts-emerald" aria-hidden="true" />
+                ) : (
+                  <ClipboardCopy className="size-4" aria-hidden="true" />
+                )}
+                {handoffCopied ? "Скопировано" : "Сводка смены"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-10 rounded-control"
                 onClick={exportToExcel}
                 disabled={!tableMatches || exporting}
                 aria-busy={exporting}
@@ -1342,7 +1584,7 @@ export function DashboardWorkspace({
               className={
                 uploadStatus.kind === "error"
                   ? "mt-2 text-label-md text-mts-crimson"
-                  : "mt-2 text-label-md text-[#007A62]"
+                  : "mt-2 text-label-md text-foreground"
               }
             >
               {uploadStatus.text}
@@ -1532,6 +1774,10 @@ export function DashboardWorkspace({
               }
               isManualProcess={(id) => manualById.has(id)}
               onClose={() => setSelectedId(undefined)}
+              onAssigned={(message) => {
+                setSelectedId(undefined);
+                setAssignmentNotice(message);
+              }}
               restoreFocus={() => {
                 if (detailsTrigger.current?.isConnected) {
                   detailsTrigger.current.focus();

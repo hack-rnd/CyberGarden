@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Plus } from "lucide-react";
+import { ArrowUpRight, Check, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -111,7 +111,7 @@ const fieldLabels: Record<string, string> = {
   sla: "SLA",
   groups: "Группы",
   priority: "Приоритет",
-  mts_link_sent: "Отправка в МТС Link",
+  mts_link_sent: "МТС Link / War Room",
   auto_closed: "Автозакрытие",
   created: "Создание",
 };
@@ -131,7 +131,7 @@ function Toast({ message }: { message: string }) {
   return (
     <p
       role="status"
-      className="pointer-events-none fixed right-4 bottom-4 z-[60] max-w-sm rounded-panel border border-l-4 border-l-mts-emerald bg-card p-4 text-[#007A62] shadow-lg"
+      className="pointer-events-none fixed right-4 bottom-4 z-[60] max-w-sm rounded-panel border border-border border-l-4 border-l-mts-emerald bg-card p-4 text-label-md text-foreground shadow-[0_4px_16px_rgba(29,32,35,0.12)]"
     >
       {message}
     </p>
@@ -208,7 +208,9 @@ export function MtsLink({ events }: { events?: readonly DiffEvent[] }) {
         <SheetContent className="overflow-y-auto data-[side=right]:sm:max-w-lg">
           <SheetHeader>
             <SheetTitle>МТС Link</SheetTitle>
-            <SheetDescription>Журнал назначений и автозакрытий</SheetDescription>
+            <SheetDescription>
+              Журнал назначений, War Room и автозакрытий
+            </SheetDescription>
           </SheetHeader>
           <div className="space-y-3 px-4 pb-4">
             {query.isPending && <p>Загрузка…</p>}
@@ -225,6 +227,17 @@ export function MtsLink({ events }: { events?: readonly DiffEvent[] }) {
                     (team): team is string => typeof team === "string",
                   )
                 : [];
+              const warRoomCreated = item.payload.warRoomCreated === true;
+              const warRoomPath =
+                typeof item.payload.warRoomPath === "string"
+                  ? item.payload.warRoomPath
+                  : typeof item.payload.warRoomUrl === "string"
+                    ? item.payload.warRoomUrl
+                    : null;
+              const aiRisk =
+                typeof item.payload.aiRiskScore === "number"
+                  ? item.payload.aiRiskScore
+                  : null;
 
               return (
                 <article
@@ -233,14 +246,24 @@ export function MtsLink({ events }: { events?: readonly DiffEvent[] }) {
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <strong className="text-label-md">{item.title}</strong>
-                    {isCoAssignee && (
-                      <Badge
-                        variant="outline"
-                        className="rounded-pill border-mts-red/35 bg-mts-red/8 px-2 py-0 text-[11px] font-semibold text-mts-crimson"
-                      >
-                        Соисполнитель МИ
-                      </Badge>
-                    )}
+                    <div className="flex flex-wrap gap-1">
+                      {warRoomCreated && (
+                        <Badge
+                          variant="outline"
+                          className="rounded-pill border-mts-red/40 bg-mts-red/10 px-2 py-0 text-[11px] font-semibold text-mts-crimson"
+                        >
+                          War Room создан
+                        </Badge>
+                      )}
+                      {isCoAssignee && (
+                        <Badge
+                          variant="outline"
+                          className="rounded-pill border-mts-ink/25 bg-mts-ink/8 px-2 py-0 text-[11px] font-semibold text-mts-ink"
+                        >
+                          Соисполнитель МИ
+                        </Badge>
+                      )}
+                    </div>
                   </div>
                   <p className="text-label-sm text-muted-foreground">
                     {item.messageType === "ASSIGNED"
@@ -250,6 +273,7 @@ export function MtsLink({ events }: { events?: readonly DiffEvent[] }) {
                       : "Автозакрытие"}
                     {" · "}
                     {item.incidentId}
+                    {aiRisk !== null ? ` · Риск ИИ ${aiRisk}%` : ""}
                   </p>
                   <p className="text-label-md font-medium">
                     {[item.recipientName, item.recipientTeam]
@@ -273,6 +297,25 @@ export function MtsLink({ events }: { events?: readonly DiffEvent[] }) {
                         {item.payload.description}
                       </p>
                     )}
+                  {warRoomCreated && warRoomPath && (
+                    <div className="pt-1">
+                      <Button
+                        asChild
+                        variant="outline"
+                        size="sm"
+                        className="h-8 rounded-control border-mts-red/40 text-mts-crimson hover:bg-mts-red hover:text-white"
+                      >
+                        <a
+                          href={warRoomPath}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          Открыть War Room
+                          <ArrowUpRight className="size-3.5" aria-hidden="true" />
+                        </a>
+                      </Button>
+                    </div>
+                  )}
                 </article>
               );
             })}
@@ -341,9 +384,11 @@ function snapshot(incident: NormalizedIncident) {
 export function IncidentAssignment({
   incident,
   defaultOpen = false,
+  onSuccess,
 }: {
   incident: NormalizedIncident;
   defaultOpen?: boolean;
+  onSuccess?: (message: string) => void;
 }) {
   const client = useQueryClient();
   const initialSnapshot = snapshot(incident);
@@ -355,18 +400,13 @@ export function IncidentAssignment({
   );
   const [additionalTeams, setAdditionalTeams] = useState<string[]>([]);
   const [customTeamInput, setCustomTeamInput] = useState("");
+  const [createWarRoom, setCreateWarRoom] = useState(false);
   const sending = useRef(false);
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
-  const [success, setSuccess] = useState("");
+  
 
   const aiSuggestion = getAiSuggestedAssignee(incident);
-
-  useEffect(() => {
-    if (!success) return;
-    const timer = window.setTimeout(() => setSuccess(""), 6000);
-    return () => window.clearTimeout(timer);
-  }, [success]);
 
   function toggleAdditionalTeam(teamName: string) {
     setAdditionalTeams((prev) =>
@@ -426,6 +466,7 @@ export function IncidentAssignment({
             ...(extraTeamsPayload.length > 0
               ? { additionalTeams: extraTeamsPayload }
               : {}),
+            createWarRoom: isCritical ? createWarRoom : false,
             sendToMtsLink: true,
           }),
         },
@@ -442,11 +483,14 @@ export function IncidentAssignment({
         mtsLinkSent?: boolean;
         recipient?: string;
         coTeamsSent?: string[];
+        warRoomCreated?: boolean;
+        warRoomId?: string | null;
       } = await response.json();
 
       if (!result.ok) throw new Error("PATCH failed");
       setDraft(null);
       setAdditionalTeams([]);
+      setCreateWarRoom(false);
 
       if (result.mtsLinkSent) {
         const extraCount = result.coTeamsSent?.length ?? 0;
@@ -455,8 +499,12 @@ export function IncidentAssignment({
           : "";
         const extraPart =
           extraCount > 0 ? ` и ещё в ${extraCount} подр.` : "";
-        setSuccess(
-          `Данные по ${incident.id} отправлены${recipientPart}${extraPart} в МТС Link.`,
+        const warRoomPart =
+          result.warRoomCreated && result.warRoomId
+            ? ` Создан War Room ${result.warRoomId}.`
+            : "";
+        onSuccess?.(
+          `Данные по ${incident.id} отправлены${recipientPart}${extraPart} в МТС Link.${warRoomPart}`,
         );
       } else {
         setMessage("Правки сохранены. Отправка в МТС Link не подтверждена.");
@@ -603,7 +651,7 @@ export function IncidentAssignment({
           </label>
 
           {isCriticalDraft && (
-            <div className="space-y-2.5 rounded-control border border-mts-red/25 bg-card p-3">
+            <div className="space-y-3 rounded-control border border-mts-red/25 bg-card p-3">
               <div>
                 <p className="text-label-md font-semibold text-foreground">
                   Привлечь дополнительные подразделения (критический МИ)
@@ -659,6 +707,24 @@ export function IncidentAssignment({
                   Добавить
                 </Button>
               </div>
+
+              <label className="flex cursor-pointer items-start gap-2.5 rounded-control border border-border bg-background p-2.5">
+                <input
+                  type="checkbox"
+                  checked={createWarRoom}
+                  onChange={(event) => setCreateWarRoom(event.target.checked)}
+                  className="mt-0.5 size-4 shrink-0 accent-primary"
+                />
+                <span className="space-y-0.5 text-label-sm">
+                  <strong className="block text-foreground">
+                    Собрать War Room в МТС Link
+                  </strong>
+                  <span className="block text-muted-foreground">
+                    Создаст оперативный штаб (/war-room/{incident.id}) и
+                    прикрепит рабочую ссылку всем привлечённым сменам.
+                  </span>
+                </span>
+              </label>
             </div>
           )}
 
@@ -759,7 +825,11 @@ export function IncidentAssignment({
               disabled={pending}
               className="h-10 rounded-control bg-mts-red px-4 font-semibold text-white hover:bg-mts-crimson"
             >
-              {pending ? "Отправка…" : "Назначить и отправить в МТС Link"}
+              {pending
+                ? "Отправка…"
+                : isCriticalDraft && createWarRoom
+                  ? "Создать War Room и отправить в МТС Link"
+                  : "Назначить и отправить в МТС Link"}
             </Button>
             <Button
               type="button"
@@ -768,6 +838,7 @@ export function IncidentAssignment({
               onClick={() => {
                 setDraft(null);
                 setAdditionalTeams([]);
+                setCreateWarRoom(false);
               }}
             >
               Отмена
@@ -782,6 +853,7 @@ export function IncidentAssignment({
             original.current = snapshot(incident);
             setDraft(original.current);
             setAdditionalTeams([]);
+            setCreateWarRoom(false);
             setMessage("");
           }}
         >
@@ -793,7 +865,6 @@ export function IncidentAssignment({
           {message}
         </p>
       )}
-      {success && <Toast message={success} />}
     </div>
   );
 }

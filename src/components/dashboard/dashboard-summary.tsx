@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { ArrowUpRight, Sparkles } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -39,12 +39,24 @@ type DashboardSummaryProps = {
   selectedGroup: IncidentGroupId | null;
   onSelectGroup: (group: IncidentGroupId | null) => void;
   ai: ReturnType<typeof useDashboardAi>;
+  activeIncidentIds?: ReadonlySet<string>;
   onOpenIncident: (id: string, trigger?: HTMLElement) => void;
   hasRiskAssessments: boolean;
   risksOnly: boolean;
   onToggleRisks: () => void;
   analytics?: ReactNode;
 };
+
+function groupSubLabel(id: IncidentGroupId, metrics?: GroupMetrics): string {
+  if (!metrics) return "Активные инциденты";
+  if (id === "ASSIGNED_TO_COORDINATORS") {
+    return `Ждут передачи · всего ${metrics.total}`;
+  }
+  if (id === "INVESTIGATION") {
+    return `На разборе RCA · всего ${metrics.total}`;
+  }
+  return `Активных из ${metrics.total}`;
+}
 
 // --- SUMMARY COMPONENT ---
 
@@ -53,6 +65,7 @@ export function DashboardSummary({
   selectedGroup,
   onSelectGroup,
   ai,
+  activeIncidentIds,
   onOpenIncident,
   hasRiskAssessments,
   risksOnly,
@@ -60,6 +73,10 @@ export function DashboardSummary({
   analytics,
 }: DashboardSummaryProps) {
   const digest = ai.digest.data;
+  const visibleConcerns =
+    digest?.topConcerns.filter(
+      (concern) => !activeIncidentIds || activeIncidentIds.has(concern.incidentId),
+    ) ?? [];
 
   return (
     <div className="grid grid-cols-12 items-start gap-4 lg:gap-6">
@@ -83,8 +100,10 @@ export function DashboardSummary({
             {incidentGroups.map(({ id, title, marker }) => {
               const groupMetrics = metrics?.get(id);
               const isSelected = selectedGroup === id;
-              const hasActiveCritical =
-                id === "CRITICAL" && (groupMetrics?.active ?? 0) > 0;
+              const activeCount = groupMetrics?.active ?? 0;
+              const hasActiveCritical = id === "CRITICAL" && activeCount > 0;
+              const hasCoordinatorQueue =
+                id === "ASSIGNED_TO_COORDINATORS" && activeCount > 0;
 
               return (
                 <li key={id} className="min-w-0">
@@ -100,23 +119,32 @@ export function DashboardSummary({
                       "transition-[transform,box-shadow,border-color] duration-200 ease-in-out",
                       "hover:border-mts-muted hover:shadow-[0_4px_16px_rgba(29,32,35,0.08)]",
                       "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
-                      "active:scale-[0.98] motion-safe:hover:-translate-y-1",
-                      isSelected && "border-mts-red",
-                      hasActiveCritical && "critical-pulse-ring",
+                      "active:scale-[0.98] motion-safe:hover:-translate-y-0.5",
+                      isSelected && "border-mts-red ring-1 ring-mts-red",
+                      hasActiveCritical && "border-2 border-mts-red",
+                      !hasActiveCritical &&
+                        hasCoordinatorQueue &&
+                        "border-mts-ink/40",
                     )}
                   >
-                    <span className="flex w-full flex-wrap items-center gap-2">
-                      <span
-                        className={cn(
-                          "size-2 shrink-0 rounded-pill",
-                          marker,
-                          hasActiveCritical && "critical-dot-pulse",
-                        )}
-                        aria-hidden="true"
-                      />
-                      <span className="text-body-md font-semibold">
-                        {title}
+                    <span className="flex w-full flex-wrap items-center justify-between gap-2">
+                      <span className="flex items-center gap-2">
+                        <span
+                          className={cn("size-2 shrink-0 rounded-pill", marker)}
+                          aria-hidden="true"
+                        />
+                        <span className="text-body-md font-semibold text-foreground">
+                          {title}
+                        </span>
                       </span>
+                      {hasCoordinatorQueue && (
+                        <Badge
+                          variant="outline"
+                          className="h-auto rounded-pill border-mts-ink/25 bg-mts-ink/8 px-2 py-0.5 text-[11px] font-semibold text-mts-ink"
+                        >
+                          В фокусе
+                        </Badge>
+                      )}
                     </span>
                     <span
                       id={`group-metrics-${id}`}
@@ -125,8 +153,10 @@ export function DashboardSummary({
                       <span className="flex flex-wrap items-center justify-between gap-2">
                         <span
                           className={cn(
-                            "font-heading text-headline-lg tabular-nums",
-                            hasActiveCritical && "text-mts-red",
+                            "font-heading text-[36px] leading-[1.15] font-semibold tabular-nums",
+                            hasActiveCritical
+                              ? "text-mts-red"
+                              : "text-foreground",
                           )}
                         >
                           {groupMetrics?.active ?? "—"}
@@ -141,12 +171,12 @@ export function DashboardSummary({
                         )}
                       </span>
                       <span className="text-label-md text-muted-foreground">
-                        {groupMetrics
-                          ? `Активных из ${groupMetrics.total}`
-                          : "Активные инциденты"}
+                        {groupSubLabel(id, groupMetrics)}
                       </span>
                       <span className="text-label-sm text-muted-foreground">
-                        Требуют внимания по SLA: {groupMetrics?.urgentSla ?? "—"}
+                        {id === "INVESTIGATION"
+                          ? "Без ограничения SLA (этап RCA)"
+                          : `Требуют внимания по SLA: ${groupMetrics?.urgentSla ?? "—"}`}
                       </span>
                     </span>
                   </button>
@@ -164,14 +194,16 @@ export function DashboardSummary({
         className="col-span-12 lg:col-span-4"
       >
         <h2 id="copilot-title" className="mb-4 text-title-lg">
-          ИИ-копилот смены
+          ИИ-советник смены
         </h2>
         <div className="rounded-panel border bg-card p-6">
           <div className="flex items-start gap-3">
-            <Sparkles
+            <span
               aria-hidden="true"
-              className="mt-0.5 size-5 shrink-0 text-mts-red"
-            />
+              className="mt-0.5 inline-flex shrink-0 items-center rounded-control bg-mts-ink px-2 py-0.5 text-[11px] font-bold tracking-wider text-white"
+            >
+              AI
+            </span>
             <p role="status" className="text-label-md font-medium leading-snug">
               {digest?.headline ??
                 (ai.digest.isPending
@@ -209,9 +241,9 @@ export function DashboardSummary({
                   </dd>
                 </div>
               </dl>
-              {digest.topConcerns.length > 0 && (
+              {visibleConcerns.length > 0 && (
                 <ul className="mt-4 space-y-3">
-                  {digest.topConcerns.map((concern) => (
+                  {visibleConcerns.map((concern) => (
                     <li
                       key={concern.incidentId}
                       className="rounded-control border p-3 text-label-md transition-colors duration-200 hover:border-mts-blue/50"
@@ -255,7 +287,7 @@ export function DashboardSummary({
             disabled={!hasRiskAssessments}
             onClick={onToggleRisks}
             className={cn(
-              "mt-4 h-auto min-h-12 w-full rounded-control px-4 py-2 text-center whitespace-normal",
+              "mt-4 h-auto min-h-11 w-full rounded-control px-4 py-2 text-center whitespace-normal",
               risksOnly
                 ? "border-mts-red bg-mts-red text-white hover:bg-mts-crimson hover:text-white"
                 : "border-mts-ink/25 hover:border-mts-ink hover:bg-mts-ink hover:text-white",
