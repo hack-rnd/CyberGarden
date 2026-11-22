@@ -1,36 +1,88 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+\# Инциденты в фокусе — Дашборд координатора массовых инцидентов
 
-## Getting Started
 
-First, run the development server:
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+Реактивный веб-сервис и ИИ-советник для отдела мониторинга и координации массовых инцидентов (24/7), разработанный для кейса \*\*МТС True Tech\*\*.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Сервис работает поверх стандартной JSON-выгрузки ITSM по принципу \*\*BlackBox\*\* (без вмешательства в ядро закрытой ITSM-системы), мгновенно отслеживает изменения, распределяет инциденты по 4 ключевым группам, помогает с первичной диагностикой и обеспечивает полный ITIL-цикл с ролевым разделением между координатором и разработчиком.
 
-## Learn More
 
-To learn more about Next.js, take a look at the following resources:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+\---
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
 
-## Deploy on Vercel
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+\## Ключевые возможности
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+
+\### 1. Оперативный контроль и 4 обязательных среза
+
+\* \*\*Четыре группы с поддержкой пересечений:\*\* «Критические», «На координаторах» (выделены статусом «В фокусе»), «Высокий приоритет» и «Исследование ситуации» (этап RCA). Один инцидент может одновременно входить в несколько групп без дублирования в таблице.
+
+\* \*\*Динамическая иерархия таблицы:\*\* активные критические инциденты закреплены сверху; задачи с остатком SLA `< 25%` и без исполнителя автоматически поднимаются выше; закрытые скрываются под переключатель.
+
+\* \*\*Быстрые инструменты смены:\*\* фильтр «Без исполнителя», «Сводка смены» (Shift Handoff в 1 клик с разбивкой активных на работу/ожидание и RCA), загрузка JSON-выгрузки через UI и экспорт текущей выборки с 24-часовой аналитикой в Excel (`.xlsx`).
+
+
+
+\### 2. Панорамный «Режим монитора» (MWS Dark UI)
+
+\* Полноэкранный режим для общего экрана смены 24/7 с выходом по `Esc` без сброса активных уведомлений.
+
+\* \*\*Закреплённый пульсирующий блок критических инцидентов\*\* выше всех виджетов — привлекает внимание даже боковым зрением.
+
+\* Крупные диспетчерские часы (`МСК · UTC+3`), панель \*\*«Состояние IT-сервисов»\*\* (`Сбой` / `Деградация` / `Штатно`) и горизонтальная лента новых активных инцидентов.
+
+
+
+\### 3. ИИ-советник и поиск похожих инцидентов
+
+\* \*\*Анализ инцидента:\*\* краткое резюме (TL;DR), шкала риска эскалации `0–100%`, прогноз срыва SLA, рекомендация профильной команды и ответственного из справочника МТС, готовый текст передачи.
+
+\* \*\*Поиск похожего закрытого инцидента (grounding):\*\* двухшаговый поиск по архиву и базе знаний с выводом 5 структурированных блоков — \*Что наблюдаем → Похожий случай и подтверждённая причина → Гипотеза ИИ → Что проверить первым (5–10 минут) → Основания\*. При нехватке данных система честно возвращает статус `insufficient\_data`.
+
+\* \*\*Отказоустойчивость:\*\* SHA-256 кэширование в SQLite, мультипровайдерный OpenAI-совместимый адаптер (готов к переключению на внутренний \*\*MWS GPT\*\*) и 100% автономный rule-based fallback.
+
+
+
+\### 4. Ролевой ITIL-цикл, МТС Link и оперативный штаб War Room
+
+\* \*\*Human-in-the-Loop:\*\* ИИ советует, решение всегда принимает координатор.
+
+\* \*\*Разделение ролей:\*\* координатор на веб-дашборде назначает ответственного и привлекает дополнительные подразделения на критический МИ (статусы «Решён» и «Закрыт» защищены от случайного выбора на вебе). Разработчик автоматически получает карточку в мессенджер-боте с кнопками «Взять в работу / Проблема решена / Закрыть инцидент» и интерактивным списком `/tasks` (без ввода ID).
+
+\* \*\*Реальный War Room (`/war-room/\[id]`):\*\* при критическом инциденте координатор может в 1 клик создать оперативный штаб — рабочая ссылка прикрепляется к карточкам всех привлечённых команд в журнале «МТС Link», а заметки из оперативного журнала штаба сохраняются в БД и автоматически отображаются во вкладке «История».
+
+\* \*\*Автозакрытие и защита данных:\*\* через 5 минут после решения тикет переходит в «Закрыт» с уведомлением в «МТС Link»; повторное открытие закрытого инцидента блокируется на уровне API (`HTTP 409 Conflict`).
+
+
+
+\---
+
+
+
+\## Архитектура
+
+
+
+```text
+
+BlackBox ITSM (data/incidents.json)
+
+&#x20;       │
+
+&#x20;       ▼  chokidar (debounce 300 ms) + атомарное чтение/запись + Zod-валидация
+
+Next.js App Router (TypeScript)
+
+&#x20; ├── mtsAdapter \& classifyIncident() ──► 4 группы + NormalizedIncident
+
+&#x20; ├── diffEngine ───────────────────────► типизированные события изменений
+
+&#x20; ├── Prisma + SQLite ──────────────────► IncidentHistory, MtsLinkMessage, War Room, AI-кэш
+
+&#x20; └── SSE (/api/stream, fallback 2s) ───► Дашборд + Монитор 24/7 + War Room + Мессенджер-бот
+
