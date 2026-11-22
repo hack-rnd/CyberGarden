@@ -5,7 +5,10 @@ import {
   ArrowDown,
   BarChart3,
   Download,
+  Eye,
+  EyeOff,
   LoaderCircle,
+  Monitor,
   Plus,
   Search,
   Upload,
@@ -25,6 +28,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { cn } from "@/lib/utils";
 import type { DiffEvent } from "@/types/incident";
 import {
   currentSlaStatus,
@@ -45,6 +49,7 @@ import { IncidentArchive, useIncidentArchive } from "./incident-archive";
 import { MtsLink } from "./incident-actions";
 import { CriticalTopBanner } from "./critical-top-banner";
 import {
+  formatDuration,
   IncidentViews,
   PAGE_SIZE,
   sortIncidentsForTable,
@@ -62,6 +67,7 @@ import {
 // --- CONSTANTS ---
 
 const ALL_VALUE = "__all__";
+const MONITOR_FRESH_WINDOW_MS = 24 * 60 * 60_000;
 
 const slaLabels = {
   ok: "В норме",
@@ -74,6 +80,20 @@ const views = [
   { value: "table", label: "Таблица" },
   { value: "groups", label: "4 группы" },
 ] as const;
+
+const moscowClockFormat = new Intl.DateTimeFormat("ru-RU", {
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  timeZone: "Europe/Moscow",
+});
+
+const moscowDateFormat = new Intl.DateTimeFormat("ru-RU", {
+  weekday: "short",
+  day: "2-digit",
+  month: "short",
+  timeZone: "Europe/Moscow",
+});
 
 type DashboardWorkspaceProps = {
   incidents?: readonly DashboardIncident[];
@@ -111,6 +131,48 @@ function MtsBadge({ className }: { className: string }) {
   );
 }
 
+function formatMonitorSla(incident: DashboardIncident, now: number | null) {
+  if (incident.status === "investigation") return "Этап RCA";
+  const deadline = deadlineFor(incident);
+  if (!Number.isFinite(deadline)) return "Без срока";
+  if (now === null) return "—";
+  const remaining = Math.ceil((deadline - now) / 1000);
+  return remaining <= 0 ? "ПРОСРОЧЕН" : formatDuration(remaining);
+}
+
+function computeMonitorSlaPct(incident: DashboardIncident, now: number | null) {
+  if (incident.status === "investigation" || now === null) return null;
+  const deadline = deadlineFor(incident);
+  if (!Number.isFinite(deadline)) return null;
+  const created = Date.parse(incident.createdAt ?? "");
+  const totalWindow =
+    Number.isFinite(created) && deadline > created
+      ? deadline - created
+      : 3_600_000;
+  const elapsed = Number.isFinite(created)
+    ? now - created
+    : totalWindow - (deadline - now);
+  return Math.min(100, Math.max(4, Math.round((elapsed / totalWindow) * 100)));
+}
+
+function splitClockParts(now: number | null): {
+  hm: string;
+  sec: string;
+  date: string;
+} {
+  if (now === null) {
+    return { hm: "--:--", sec: "--", date: "—" };
+  }
+  const [hh = "--", mm = "--", ss = "--"] = moscowClockFormat
+    .format(now)
+    .split(":");
+  return {
+    hm: `${hh}:${mm}`,
+    sec: ss,
+    date: moscowDateFormat.format(now),
+  };
+}
+
 // --- WORKSPACE ---
 
 export function DashboardWorkspace({
@@ -126,12 +188,23 @@ export function DashboardWorkspace({
   const [team, setTeam] = useState("");
   const [incidentStatus, setIncidentStatus] = useState(ALL_VALUE);
   const [sla, setSla] = useState("");
+  const [showClosed, setShowClosed] = useState(false);
+  const [monitorMode, setMonitorMode] = useState(false);
   const [view, setView] = useState<(typeof views)[number]["value"]>("table");
   const [page, setPage] = useState(1);
   const [incidentJump, setIncidentJump] = useState<{ id: string } | null>(null);
 
   useEffect(() => {
-    if (!incidentJump || view !== "table") return;
+    if (!monitorMode) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setMonitorMode(false);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [monitorMode]);
+
+  useEffect(() => {
+    if (!incidentJump || view !== "table" || monitorMode) return;
 
     const row = document.getElementById(`incident-row-${incidentJump.id}`);
     if (!row) return;
@@ -151,7 +224,8 @@ export function DashboardWorkspace({
     }, 2_500);
 
     return () => window.clearTimeout(timeout);
-  }, [incidentJump, page, view]);
+  }, [incidentJump, page, view, monitorMode]);
+
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState("");
   const [uploadingJson, setUploadingJson] = useState(false);
@@ -208,20 +282,23 @@ export function DashboardWorkspace({
     const id = new URLSearchParams(window.location.search).get("incident");
     if (!id || handledIncidentLink.current === id) return;
 
-    const incident = sourceIncidents?.find((item) => item.id === id)
-      ?? sourceIncidents?.find((item) => item.code === id);
+    const incident =
+      sourceIncidents?.find((item) => item.id === id) ??
+      sourceIncidents?.find((item) => item.code === id);
     if (!incident) return;
 
     const frame = window.requestAnimationFrame(() => {
       handledIncidentLink.current = id;
-      detailsTrigger.current = document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
+      detailsTrigger.current =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
       setSelectedId(incident.id);
     });
 
     return () => window.cancelAnimationFrame(frame);
   }, [sourceIncidents]);
+
   const archive = useIncidentArchive();
   const archivedById = new Map(
     archive.entries.map((entry) => [entry.id, entry]),
@@ -243,10 +320,12 @@ export function DashboardWorkspace({
   }
 
   const now = useIncidentClock(
-    incidents?.some(
-      (incident) =>
-        isIncidentActive(incident) && Number.isFinite(deadlineFor(incident)),
-    ) ?? false,
+    monitorMode ||
+      (incidents?.some(
+        (incident) =>
+          isIncidentActive(incident) && Number.isFinite(deadlineFor(incident)),
+      ) ??
+        false),
   );
 
   const criticalResolutions = new Map<string, number | null>();
@@ -418,9 +497,10 @@ export function DashboardWorkspace({
       setPage(1);
       setUploadStatus({
         kind: "ok",
-        text: loadedCount !== undefined
-          ? `Файл «${file.name}» загружен (${loadedCount} записей).`
-          : `Файл «${file.name}» успешно загружен.`,
+        text:
+          loadedCount !== undefined
+            ? `Файл «${file.name}» загружен (${loadedCount} записей).`
+            : `Файл «${file.name}» успешно загружен.`,
       });
     } catch {
       setUploadStatus({
@@ -445,8 +525,28 @@ export function DashboardWorkspace({
   const activeService = services.includes(service) ? service : "";
   const activeTeam = teams.includes(team) ? team : "";
 
+  const activeIncidentIds = new Set(
+    (visibleIncidents ?? [])
+      .filter(
+        (incident) =>
+          incident.status !== "closed" && incident.status !== "resolved",
+      )
+      .map((incident) => incident.id),
+  );
+
+  const closedCount = (visibleIncidents ?? []).filter(
+    (incident) => incident.status === "closed",
+  ).length;
+  const includeClosed =
+    showClosed || incidentStatus === "closed" || Boolean(search);
+
   const hasRiskAssessments =
-    visibleIncidents?.some((incident) => incident.ai !== null) ?? false;
+    visibleIncidents?.some(
+      (incident) =>
+        incident.ai !== null &&
+        incident.status !== "closed" &&
+        incident.status !== "resolved",
+    ) ?? false;
   const showRisksOnly = risksOnly && hasRiskAssessments;
   const selectedGroupTitle = incidentGroups.find(
     (group) => group.id === selectedGroup,
@@ -470,9 +570,17 @@ export function DashboardWorkspace({
         const members = visibleIncidents.filter((incident) =>
           incident.groups.includes(id),
         );
-        const active = members.filter(isIncidentActive);
+        const active =
+          id === "ASSIGNED_TO_COORDINATORS" || id === "INVESTIGATION"
+            ? members.filter(
+                (incident) =>
+                  incident.status !== "closed" && incident.status !== "resolved",
+              )
+            : members.filter(isIncidentActive);
         const urgentSla = active.filter(
-          (incident) => currentSlaStatus(incident, now) !== "ok",
+          (incident) =>
+            incident.status !== "investigation" &&
+            currentSlaStatus(incident, now) !== "ok",
         ).length;
 
         return [
@@ -491,6 +599,7 @@ export function DashboardWorkspace({
 
   const tableMatches = visibleIncidents?.filter(
     (incident) =>
+      (includeClosed || incident.status !== "closed") &&
       (!search ||
         [incident.id, incident.product, incident.description].some((value) =>
           value.toLocaleLowerCase("ru").includes(search),
@@ -500,7 +609,10 @@ export function DashboardWorkspace({
       (incidentStatus === ALL_VALUE || incident.status === incidentStatus) &&
       (!sla || currentSlaStatus(incident, now) === sla) &&
       (!selectedGroup || incident.groups.includes(selectedGroup)) &&
-      (!showRisksOnly || incident.ai?.riskLevel === "high"),
+      (!showRisksOnly ||
+        (incident.ai?.riskLevel === "high" &&
+          incident.status !== "closed" &&
+          incident.status !== "resolved")),
   );
   const matches =
     view === "table"
@@ -513,13 +625,84 @@ export function DashboardWorkspace({
       (incident.priority === "critical" || incident.groups.includes("CRITICAL")),
   );
 
+  const monitorIncomingIncidents = monitorMode
+    ? sortIncidentsForTable(
+        (visibleIncidents ?? []).filter((incident) => {
+          if (incident.status === "closed" || incident.status === "resolved") {
+            return false;
+          }
+          const isCrit =
+            incident.priority === "critical" ||
+            incident.groups.includes("CRITICAL");
+          const isUnassigned = !incident.assigneeEmployee?.trim();
+          const createdMs = Date.parse(incident.createdAt ?? "");
+          const isRecent =
+            now === null ||
+            (Number.isFinite(createdMs) &&
+              now - createdMs <= MONITOR_FRESH_WINDOW_MS);
+          return isCrit || isUnassigned || isRecent;
+        }),
+        criticalResolutions,
+        now,
+      )
+    : [];
+
+  const serviceHealthMap = new Map<
+    string,
+    { product: string; level: "critical" | "degraded" | "ok"; count: number }
+  >();
+  if (monitorMode) {
+    for (const incident of visibleIncidents ?? []) {
+      let existing = serviceHealthMap.get(incident.product);
+      if (!existing) {
+        existing = { product: incident.product, level: "ok", count: 0 };
+        serviceHealthMap.set(incident.product, existing);
+      }
+      const isOpen =
+        incident.status !== "closed" &&
+        incident.status !== "resolved" &&
+        incident.status !== "investigation";
+      if (isOpen) {
+        existing.count++;
+        const isCrit =
+          incident.priority === "critical" ||
+          incident.groups.includes("CRITICAL");
+        if (isCrit) {
+          existing.level = "critical";
+        } else if (existing.level !== "critical") {
+          existing.level = "degraded";
+        }
+      }
+    }
+  }
+  const healthOrder = { critical: 0, degraded: 1, ok: 2 };
+  const serviceHealthItems = Array.from(serviceHealthMap.values())
+    .sort(
+      (a, b) =>
+        healthOrder[a.level] - healthOrder[b.level] ||
+        b.count - a.count ||
+        a.product.localeCompare(b.product, "ru"),
+    )
+    .slice(0, 10);
+
+  const clockParts = splitClockParts(now);
+
   function jumpToIncident(id: string) {
+    const target = (visibleIncidents ?? []).find((item) => item.id === id);
+    if (!target) return;
+
+    const targetIsClosed = target.status === "closed";
+    if (targetIsClosed) setShowClosed(true);
+
+    const pool = (visibleIncidents ?? []).filter(
+      (item) => targetIsClosed || showClosed || item.status !== "closed",
+    );
     const orderedIncidents = sortIncidentsForTable(
-      visibleIncidents ?? [],
+      pool,
       criticalResolutions,
+      now,
     );
     const index = orderedIncidents.findIndex((incident) => incident.id === id);
-
     if (index === -1) return;
 
     resetAllFilters();
@@ -528,7 +711,9 @@ export function DashboardWorkspace({
     setIncidentJump({ id });
   }
 
-  const totalVisibleCount = visibleIncidents?.length ?? 0;
+  const totalVisibleCount = (visibleIncidents ?? []).filter(
+    (incident) => includeClosed || incident.status !== "closed",
+  ).length;
 
   async function exportToExcel() {
     if (!incidents || !tableMatches || exporting) return;
@@ -551,7 +736,12 @@ export function DashboardWorkspace({
 
   return (
     <>
-      <header className="fixed inset-x-0 top-0 z-10 border-b border-white/10 bg-mts-ink text-white">
+      <header
+        className={cn(
+          "fixed inset-x-0 top-0 z-10 border-b border-white/10 bg-mts-ink text-white",
+          monitorMode && "invisible pointer-events-none",
+        )}
+      >
         <div className="mx-auto flex h-16 max-w-7xl items-center gap-2 px-6 sm:gap-4 lg:px-12">
           <span className="flex shrink-0 items-center gap-2.5 text-label-md font-bold tracking-wide text-white">
             <MtsBadge className="size-8 sm:size-9" />
@@ -563,7 +753,7 @@ export function DashboardWorkspace({
             <div className="relative w-full max-w-md">
               <Search
                 aria-hidden="true"
-                className="pointer-events-none absolute top-3.5 left-3.5 size-4 text-white/50"
+                className="pointer-events-none absolute top-3 left-3.5 size-4 text-white/50"
               />
               <Input
                 type="search"
@@ -580,9 +770,20 @@ export function DashboardWorkspace({
           </div>
 
           <div className="flex shrink-0 items-center gap-1 [&>button]:text-white [&>button:hover]:bg-white/10 [&>button:hover]:text-white">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="hidden h-9 gap-1.5 rounded-control px-2.5 text-label-sm md:inline-flex"
+              onClick={() => setMonitorMode(true)}
+            >
+              <Monitor className="size-4" aria-hidden="true" />
+              Монитор
+            </Button>
             <DashboardAlerts
               events={liveEvents}
               incidents={visibleIncidents ?? []}
+              hidden={monitorMode}
               onJump={jumpToIncident}
               onOpen={openDetails}
             />
@@ -596,10 +797,315 @@ export function DashboardWorkspace({
         </div>
       </header>
 
+      {monitorMode && (
+        <div
+          role="region"
+          aria-label="Панорамный режим монитора смены"
+          className="fixed inset-0 z-50 flex flex-col overflow-y-auto bg-[#0D0F12] text-[#F5F7FA]"
+        >
+          <div className="border-b border-[#242830] bg-[#16191D] px-6 py-3.5 xl:px-10">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-3.5">
+                <MtsBadge className="size-10" />
+                <div>
+                  <p className="font-heading text-body-md font-semibold tracking-tight text-white">
+                    МТС True Tech · Монитор координатора 24/7
+                  </p>
+                  <p className="text-label-sm text-[#8F98A3]">
+                    Оперативный контроль IT-сервисов и массовых инцидентов
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-4">
+                <div
+                  aria-label="Текущее московское время"
+                  className="flex items-center gap-4 rounded-control border border-[#2C313A] bg-[#0D0F12] px-4 py-2"
+                >
+                  <time className="flex items-baseline gap-1 font-heading leading-none tabular-nums">
+                    <span className="text-[30px] font-semibold tracking-tight text-white">
+                      {clockParts.hm}
+                    </span>
+                    <span className="text-[18px] font-medium text-[#8F98A3]">
+                      :{clockParts.sec}
+                    </span>
+                  </time>
+                  <span
+                    aria-hidden="true"
+                    className="h-8 w-px bg-[#2C313A]"
+                  />
+                  <div className="leading-tight">
+                    <p className="text-[11px] font-bold tracking-wider text-[#8F98A3] uppercase">
+                      МСК · UTC+3
+                    </p>
+                    <p className="mt-0.5 text-label-sm font-medium text-[#E4E8EE] capitalize">
+                      {clockParts.date}
+                    </p>
+                  </div>
+                </div>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-10 rounded-control border-[#353B45] bg-[#1C2026] px-4 text-[#E4E8EE] hover:border-[#535B66] hover:bg-[#252A32] hover:text-white"
+                  onClick={() => setMonitorMode(false)}
+                >
+                  <X className="size-4" aria-hidden="true" />
+                  Выйти (Esc)
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex-1 space-y-5 px-6 py-5 xl:px-10">
+            <ul className="grid grid-cols-2 gap-3 lg:grid-cols-4 xl:gap-4">
+              {incidentGroups.map(({ id, title, marker }) => {
+                const count = metrics?.get(id)?.active ?? 0;
+                const isCrit = id === "CRITICAL" && count > 0;
+                const isCoord =
+                  id === "ASSIGNED_TO_COORDINATORS" && count > 0;
+                const darkMarker =
+                  id === "ASSIGNED_TO_COORDINATORS" ? "bg-[#E4E8EE]" : marker;
+
+                return (
+                  <li
+                    key={id}
+                    className={cn(
+                      "flex items-center justify-between rounded-panel border px-5 py-4",
+                      isCrit
+                        ? "monitor-critical-pulse border-2 border-mts-red"
+                        : isCoord
+                          ? "border-[#424955] bg-[#16191D]"
+                          : "border-[#242830] bg-[#16191D]",
+                    )}
+                  >
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 text-label-md font-medium text-[#E4E8EE]">
+                        <span className={`size-2.5 rounded-pill ${darkMarker}`} />
+                        {title}
+                      </div>
+                      <p className="text-label-sm text-[#8F98A3]">
+                        {isCrit
+                          ? "Требуется немедленная реакция"
+                          : isCoord
+                            ? "Ожидают передачи команде"
+                            : "Активные сейчас"}
+                      </p>
+                    </div>
+                    <p
+                      className={cn(
+                        "font-heading text-[44px] leading-none font-semibold tabular-nums",
+                        isCrit ? "text-mts-red" : "text-white",
+                      )}
+                    >
+                      {count}
+                    </p>
+                  </li>
+                );
+              })}
+            </ul>
+
+            {serviceHealthItems.length > 0 && (
+              <section className="rounded-panel border border-[#242830] bg-[#16191D] px-5 py-4">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <h2 className="font-sans text-label-sm font-semibold tracking-wider text-[#8F98A3] uppercase">
+                    Состояние IT-сервисов
+                  </h2>
+                  <div className="flex items-center gap-4 text-[12px] text-[#8F98A3]">
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="size-2 rounded-full bg-mts-red" />
+                      Сбой
+                    </span>
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="size-2 rounded-full bg-[#EB4A13]" />
+                      Деградация
+                    </span>
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="size-2 rounded-full bg-[#00A887]" />
+                      Штатно
+                    </span>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {serviceHealthItems.map((item) => (
+                    <div
+                      key={item.product}
+                      className={cn(
+                        "inline-flex items-center gap-2.5 rounded-control border border-[#2B313B] border-l-[3px] bg-[#1C2026] px-3 py-2 text-label-sm",
+                        item.level === "critical" && "border-l-mts-red",
+                        item.level === "degraded" && "border-l-[#EB4A13]",
+                        item.level === "ok" && "border-l-[#00A887]",
+                      )}
+                    >
+                      <span className="font-medium text-[#F5F7FA]">
+                        {item.product}
+                      </span>
+                      {item.level === "critical" ? (
+                        <span className="rounded-pill bg-mts-red px-2 py-0.5 text-[11px] font-bold text-white tabular-nums">
+                          Сбой · {item.count}
+                        </span>
+                      ) : item.level === "degraded" ? (
+                        <span className="text-[12px] font-medium text-[#D6DADF] tabular-nums">
+                          Деградация · {item.count}
+                        </span>
+                      ) : (
+                        <span className="text-[12px] font-medium text-[#00C19B]">
+                          Штатно
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            <section className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-title-lg font-medium text-white">
+                  Поток новых и активных инцидентов (
+                  {monitorIncomingIncidents.length})
+                </h2>
+                <span className="text-label-sm text-[#8F98A3]">
+                  Критические закреплены сверху · клик по строке откроет
+                  карточку
+                </span>
+              </div>
+
+              {monitorIncomingIncidents.length > 0 ? (
+                <ul className="space-y-2.5">
+                  {monitorIncomingIncidents.map((incident) => {
+                    const isCrit =
+                      incident.priority === "critical" ||
+                      incident.groups.includes("CRITICAL");
+                    const slaText = formatMonitorSla(incident, now);
+                    const slaPct = computeMonitorSlaPct(incident, now);
+                    const isBreached = slaText === "ПРОСРОЧЕН";
+                    const hasAssignee = Boolean(
+                      incident.assigneeEmployee?.trim(),
+                    );
+
+                    return (
+                      <li key={incident.id}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMonitorMode(false);
+                            openDetails(incident.id);
+                          }}
+                          className={cn(
+                            "grid w-full cursor-pointer grid-cols-1 items-center gap-3 rounded-panel border border-l-4 px-5 py-3.5 text-left transition-colors duration-150 lg:grid-cols-12",
+                            isCrit
+                              ? "monitor-critical-pulse border-l-mts-red"
+                              : !hasAssignee
+                                ? "border-[#2B313B] border-l-[#EB4A13] bg-[#16191D] hover:bg-[#1C2026]"
+                                : "border-[#242830] border-l-[#007CFF] bg-[#16191D] hover:bg-[#1C2026]",
+                          )}
+                        >
+                          <div className="flex flex-wrap items-center gap-2 lg:col-span-2">
+                            <span
+                              className={cn(
+                                "font-heading text-label-md font-semibold tabular-nums",
+                                isCrit ? "text-mts-red" : "text-white",
+                              )}
+                            >
+                              {incident.id}
+                            </span>
+                            {isCrit && (
+                              <span className="rounded-pill bg-mts-red px-2 py-0.5 text-[10px] font-bold tracking-wide text-white uppercase">
+                                Критический
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="min-w-0 lg:col-span-2">
+                            <p className="truncate font-semibold text-white">
+                              {incident.product}
+                            </p>
+                            <p className="text-[11px] text-[#8F98A3]">
+                              {incident.serviceType || "IT-сервис"}
+                              {incident.isMaster ? " · Мастер-МИ" : ""}
+                            </p>
+                          </div>
+
+                          <div className="min-w-0 lg:col-span-4">
+                            <p className="line-clamp-1 text-label-md font-medium text-[#F5F7FA]">
+                              {incident.title || incident.description}
+                            </p>
+                            <p className="line-clamp-1 text-label-sm text-[#8F98A3]">
+                              {incident.description}
+                            </p>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2 lg:col-span-2">
+                            {hasAssignee ? (
+                              <div className="min-w-0">
+                                <p className="truncate text-label-sm font-medium text-[#F5F7FA]">
+                                  {incident.assigneeEmployee}
+                                </p>
+                                <p className="truncate text-[11px] text-[#8F98A3]">
+                                  {incident.assigneeTeam}
+                                </p>
+                              </div>
+                            ) : (
+                              <span className="rounded-control border border-[#EB4A13]/60 bg-[#261B16] px-2.5 py-1 text-label-sm font-semibold text-[#F5F7FA]">
+                                Исполнитель не указан
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center justify-between gap-3 lg:col-span-2 lg:flex-col lg:items-end lg:gap-1.5">
+                            <span className="rounded-pill border border-[#303640] bg-[#1C2026] px-2.5 py-0.5 text-[11px] font-medium text-[#E4E8EE]">
+                              {statusLabels[incident.status]}
+                            </span>
+                            <div className="flex flex-col items-end gap-1">
+                              <span
+                                className={cn(
+                                  "font-heading text-body-md font-semibold tabular-nums",
+                                  isCrit || isBreached
+                                    ? "text-mts-red"
+                                    : "text-[#00C19B]",
+                                )}
+                              >
+                                {slaText}
+                              </span>
+                              {slaPct !== null && (
+                                <div className="h-1.5 w-24 overflow-hidden rounded-pill bg-[#2B313B]">
+                                  <div
+                                    className={cn(
+                                      "h-full rounded-pill",
+                                      isBreached || slaPct >= 75
+                                        ? "bg-mts-red"
+                                        : slaPct >= 60
+                                          ? "bg-[#EB4A13]"
+                                          : "bg-[#00A887]",
+                                    )}
+                                    style={{ width: `${slaPct}%` }}
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : (
+                <div className="rounded-panel border border-[#242830] bg-[#16191D] p-8 text-center">
+                  <p className="font-heading text-title-lg text-[#00C19B]">
+                    Новых активных инцидентов нет — сервисы работают штатно
+                  </p>
+                </div>
+              )}
+            </section>
+          </div>
+        </div>
+      )}
+
       <div role="status" className="sr-only">
         {archiveNotice && `Инцидент ${archiveNotice.code} скрыт в архив.`}
       </div>
-      {archiveNotice && (
+      {!monitorMode && archiveNotice && (
         <div className="fixed right-4 bottom-4 z-40 flex max-w-[calc(100%-2rem)] items-center gap-3 rounded-panel border border-l-4 border-l-mts-emerald bg-card p-3 text-card-foreground shadow-lg motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-2">
           <Archive
             className="size-5 shrink-0 text-mts-emerald"
@@ -621,9 +1127,12 @@ export function DashboardWorkspace({
         </div>
       )}
 
-      <MtsBadge className="pointer-events-none fixed bottom-4 left-2 z-10 size-7 sm:left-4 sm:size-9" />
-
-      <main className="mx-auto w-full max-w-7xl px-6 pt-24 pb-12 lg:px-12">
+      <main
+        className={cn(
+          "mx-auto w-full max-w-7xl px-6 pt-24 pb-12 lg:px-12",
+          monitorMode && "hidden",
+        )}
+      >
         <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
           <h1 className="text-2xl tracking-tight sm:text-headline-lg">
             Инциденты в фокусе
@@ -676,6 +1185,7 @@ export function DashboardWorkspace({
           selectedGroup={selectedGroup}
           onSelectGroup={handleSelectGroup}
           ai={ai}
+          activeIncidentIds={activeIncidentIds}
           onOpenIncident={openDetails}
           hasRiskAssessments={hasRiskAssessments}
           risksOnly={showRisksOnly}
@@ -740,10 +1250,30 @@ export function DashboardWorkspace({
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
+              {closedCount > 0 && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-10 rounded-control"
+                  onClick={() => {
+                    setShowClosed((prev) => !prev);
+                    setPage(1);
+                  }}
+                >
+                  {includeClosed ? (
+                    <EyeOff className="size-4" aria-hidden="true" />
+                  ) : (
+                    <Eye className="size-4" aria-hidden="true" />
+                  )}
+                  {includeClosed
+                    ? "Скрыть закрытые"
+                    : `Закрытые (${closedCount})`}
+                </Button>
+              )}
               <Button
                 type="button"
                 aria-haspopup="dialog"
-                className="h-10 rounded-control bg-mts-crimson text-white hover:bg-mts-wine"
+                className="h-10 rounded-control bg-mts-red text-white hover:bg-mts-crimson"
                 onClick={(event) => openProcessEditor(event.currentTarget)}
               >
                 <Plus aria-hidden="true" />
@@ -833,10 +1363,16 @@ export function DashboardWorkspace({
                 }}
                 disabled={!services.length}
               >
-                <SelectTrigger className="h-12 w-full rounded-control border-input bg-card text-label-md hover:border-mts-muted">
+                <SelectTrigger className="h-11 w-full rounded-control border-input bg-card text-label-md hover:border-mts-muted">
                   <SelectValue placeholder="Все продукты" />
                 </SelectTrigger>
-                <SelectContent className="max-h-72 rounded-panel border-border bg-card shadow-[0_4px_16px_rgba(29,32,35,0.08)]">
+                <SelectContent
+                  position="popper"
+                  side="bottom"
+                  align="start"
+                  sideOffset={4}
+                  className="max-h-72 rounded-panel border-border bg-card shadow-[0_4px_16px_rgba(29,32,35,0.08)]"
+                >
                   <SelectGroup>
                     <SelectItem value={ALL_VALUE}>Все продукты</SelectItem>
                     {services.map((option) => (
@@ -859,10 +1395,16 @@ export function DashboardWorkspace({
                 }}
                 disabled={!teams.length}
               >
-                <SelectTrigger className="h-12 w-full rounded-control border-input bg-card text-label-md hover:border-mts-muted">
+                <SelectTrigger className="h-11 w-full rounded-control border-input bg-card text-label-md hover:border-mts-muted">
                   <SelectValue placeholder="Все команды" />
                 </SelectTrigger>
-                <SelectContent className="max-h-72 rounded-panel border-border bg-card shadow-[0_4px_16px_rgba(29,32,35,0.08)]">
+                <SelectContent
+                  position="popper"
+                  side="bottom"
+                  align="start"
+                  sideOffset={4}
+                  className="max-h-72 rounded-panel border-border bg-card shadow-[0_4px_16px_rgba(29,32,35,0.08)]"
+                >
                   <SelectGroup>
                     <SelectItem value={ALL_VALUE}>Все команды</SelectItem>
                     {teams.map((option) => (
@@ -891,11 +1433,17 @@ export function DashboardWorkspace({
               >
                 <SelectTrigger
                   id="incident-status-filter"
-                  className="h-12 w-full rounded-control border-input bg-card text-label-md hover:border-mts-muted"
+                  className="h-11 w-full rounded-control border-input bg-card text-label-md hover:border-mts-muted"
                 >
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent className="max-h-72 rounded-panel border-border bg-card shadow-[0_4px_16px_rgba(29,32,35,0.08)]">
+                <SelectContent
+                  position="popper"
+                  side="bottom"
+                  align="start"
+                  sideOffset={4}
+                  className="max-h-72 rounded-panel border-border bg-card shadow-[0_4px_16px_rgba(29,32,35,0.08)]"
+                >
                   <SelectGroup>
                     <SelectItem value={ALL_VALUE}>Все статусы</SelectItem>
                     {Object.entries(statusLabels).map(([value, label]) => (
@@ -917,10 +1465,16 @@ export function DashboardWorkspace({
                   setPage(1);
                 }}
               >
-                <SelectTrigger className="h-12 w-full rounded-control border-input bg-card text-label-md hover:border-mts-muted">
+                <SelectTrigger className="h-11 w-full rounded-control border-input bg-card text-label-md hover:border-mts-muted">
                   <SelectValue placeholder="Все статусы SLA" />
                 </SelectTrigger>
-                <SelectContent className="max-h-72 rounded-panel border-border bg-card shadow-[0_4px_16px_rgba(29,32,35,0.08)]">
+                <SelectContent
+                  position="popper"
+                  side="bottom"
+                  align="start"
+                  sideOffset={4}
+                  className="max-h-72 rounded-panel border-border bg-card shadow-[0_4px_16px_rgba(29,32,35,0.08)]"
+                >
                   <SelectGroup>
                     <SelectItem value={ALL_VALUE}>Все статусы SLA</SelectItem>
                     {Object.entries(slaLabels).map(([value, label]) => (
@@ -937,7 +1491,7 @@ export function DashboardWorkspace({
               <legend className="mb-2 text-label-md font-medium">
                 Вид списка
               </legend>
-              <div className="flex min-h-12 rounded-control border bg-card p-1">
+              <div className="flex min-h-11 rounded-control border bg-card p-1">
                 {views.map(({ value, label }) => (
                   <label key={value} className="flex-1 cursor-pointer">
                     <input
@@ -969,7 +1523,9 @@ export function DashboardWorkspace({
               criticalResolutions={criticalResolutions}
               onArchive={archiveProcess}
               selected={selectedIncident}
-              selectedIsServerBacked={Boolean(sourceIncidents?.some(({ id }) => id === selectedId))}
+              selectedIsServerBacked={Boolean(
+                sourceIncidents?.some(({ id }) => id === selectedId),
+              )}
               onOpenDetails={(id, event) => openDetails(id, event.currentTarget)}
               onEditProcess={(id, event) =>
                 openProcessEditor(event.currentTarget, id)

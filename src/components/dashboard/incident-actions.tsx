@@ -1,8 +1,9 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Sparkles } from "lucide-react";
+import { Check, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -21,6 +22,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import { cn } from "@/lib/utils";
 import type {
   DiffEvent,
   IncidentHistoryItem,
@@ -53,6 +55,8 @@ export const DUTY_ASSIGNEES = [
   { employee: "Лисичка-сестричка (lisichka)", team: "КЦ ИТ Развитие DEVOPS" },
   { employee: "Карлсон (karlsson)", team: "КЦ ББ ДИБ УРМС VPN Support" },
 ] as const;
+
+const DEPARTMENT_OPTIONS = DUTY_ASSIGNEES.map((item) => item.team);
 
 export function getAiSuggestedAssignee(incident: NormalizedIncident): {
   employee: string;
@@ -92,6 +96,8 @@ const statusLabels: Record<IncidentStatus, string> = {
   closed: "Закрыт",
 };
 
+const DEVELOPER_ONLY_STATUSES = new Set<IncidentStatus>(["resolved", "closed"]);
+
 const priorityLabels: Record<IncidentPriority, string> = {
   critical: "Критический",
   high: "Высокий",
@@ -113,7 +119,7 @@ const fieldLabels: Record<string, string> = {
 const selectTriggerClass =
   "h-11 w-full rounded-control border-input bg-card text-label-md hover:border-mts-muted";
 const selectContentClass =
-  "max-h-72 rounded-panel border-border bg-card shadow-[0_4px_16px_rgba(29,32,35,0.08)]";
+  "max-h-64 w-(--radix-select-trigger-width) min-w-0 rounded-panel border-border bg-card shadow-[0_4px_16px_rgba(29,32,35,0.1)]";
 
 async function read<T>(url: string, signal: AbortSignal): Promise<T> {
   const response = await fetch(url, { signal, cache: "no-store" });
@@ -191,7 +197,11 @@ export function MtsLink({ events }: { events?: readonly DiffEvent[] }) {
     <>
       <Sheet>
         <SheetTrigger asChild>
-          <Button type="button" variant="outline">
+          <Button
+            type="button"
+            variant="outline"
+            className="h-11 rounded-control bg-card px-4"
+          >
             МТС Link {query.data ? "(" + query.data.messages.length + ")" : ""}
           </Button>
         </SheetTrigger>
@@ -208,32 +218,64 @@ export function MtsLink({ events }: { events?: readonly DiffEvent[] }) {
               </Button>
             )}
             {query.data?.messages.length === 0 && <p>Сообщений пока нет.</p>}
-            {query.data?.messages.map((item) => (
-              <article
-                key={item.id}
-                className="space-y-1 rounded-panel border bg-card p-3"
-              >
-                <strong>{item.title}</strong>
-                <p>
-                  {item.messageType === "ASSIGNED"
-                    ? "Назначение исполнителя"
-                    : "Автозакрытие"}
-                  {" · "}
-                  {item.incidentId}
-                </p>
-                <p>
-                  {[item.recipientName, item.recipientTeam]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </p>
-                <time dateTime={item.createdAt}>
-                  {time.format(new Date(item.createdAt))} МСК
-                </time>
-                {typeof item.payload.description === "string" && (
-                  <p className="wrap-break-word">{item.payload.description}</p>
-                )}
-              </article>
-            ))}
+            {query.data?.messages.map((item) => {
+              const isCoAssignee = item.payload.role === "co_assignee";
+              const coTeams = Array.isArray(item.payload.coAssigneeTeams)
+                ? item.payload.coAssigneeTeams.filter(
+                    (team): team is string => typeof team === "string",
+                  )
+                : [];
+
+              return (
+                <article
+                  key={item.id}
+                  className="space-y-1.5 rounded-panel border bg-card p-3.5"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <strong className="text-label-md">{item.title}</strong>
+                    {isCoAssignee && (
+                      <Badge
+                        variant="outline"
+                        className="rounded-pill border-mts-red/35 bg-mts-red/8 px-2 py-0 text-[11px] font-semibold text-mts-crimson"
+                      >
+                        Соисполнитель МИ
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="text-label-sm text-muted-foreground">
+                    {item.messageType === "ASSIGNED"
+                      ? isCoAssignee
+                        ? "Привлечение подразделения"
+                        : "Назначение исполнителя"
+                      : "Автозакрытие"}
+                    {" · "}
+                    {item.incidentId}
+                  </p>
+                  <p className="text-label-md font-medium">
+                    {[item.recipientName, item.recipientTeam]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </p>
+                  {coTeams.length > 0 && (
+                    <p className="text-label-sm text-muted-foreground">
+                      Привлечены: {coTeams.join(", ")}
+                    </p>
+                  )}
+                  <time
+                    dateTime={item.createdAt}
+                    className="block text-label-sm text-muted-foreground"
+                  >
+                    {time.format(new Date(item.createdAt))} МСК
+                  </time>
+                  {typeof item.payload.description === "string" &&
+                    item.payload.description.trim() && (
+                      <p className="text-label-sm text-foreground wrap-break-word">
+                        {item.payload.description}
+                      </p>
+                    )}
+                </article>
+              );
+            })}
           </div>
         </SheetContent>
       </Sheet>
@@ -269,10 +311,10 @@ export function IncidentHistory({ id }: { id: string }) {
       {query.data.history.map((item) => (
         <li key={item.id} className="space-y-1">
           <strong>{fieldLabels[item.field] ?? item.field}</strong>
-          <p className="text-muted-foreground">
+          <p className="text-label-sm text-muted-foreground">
             {time.format(new Date(item.createdAt))} МСК · {item.actor}
           </p>
-          <p className="wrap-break-word">
+          <p className="text-label-md wrap-break-word">
             {item.oldValue ?? "—"} → {item.newValue}
           </p>
         </li>
@@ -311,6 +353,8 @@ export function IncidentAssignment({
   const original = useRef<ReturnType<typeof snapshot> | null>(
     defaultOpen ? initialSnapshot : null,
   );
+  const [additionalTeams, setAdditionalTeams] = useState<string[]>([]);
+  const [customTeamInput, setCustomTeamInput] = useState("");
   const sending = useRef(false);
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
@@ -323,6 +367,25 @@ export function IncidentAssignment({
     const timer = window.setTimeout(() => setSuccess(""), 6000);
     return () => window.clearTimeout(timer);
   }, [success]);
+
+  function toggleAdditionalTeam(teamName: string) {
+    setAdditionalTeams((prev) =>
+      prev.includes(teamName)
+        ? prev.filter((item) => item !== teamName)
+        : prev.length < 8
+          ? [...prev, teamName]
+          : prev,
+    );
+  }
+
+  function addCustomTeam() {
+    const trimmed = customTeamInput.trim();
+    if (!trimmed) return;
+    if (!additionalTeams.includes(trimmed) && additionalTeams.length < 8) {
+      setAdditionalTeams((prev) => [...prev, trimmed]);
+    }
+    setCustomTeamInput("");
+  }
 
   async function submit() {
     if (!draft || !original.current || sending.current) return;
@@ -342,13 +405,29 @@ export function IncidentAssignment({
       ),
     );
 
+    const isCritical =
+      draft.priority === "critical" || incident.groups.includes("CRITICAL");
+    const extraTeamsPayload = isCritical
+      ? additionalTeams.filter(
+          (team) =>
+            team.trim().toLowerCase() !==
+            draft.assigneeTeam.trim().toLowerCase(),
+        )
+      : [];
+
     try {
       const response = await fetch(
         "/api/incidents/" + encodeURIComponent(incident.id),
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...changed, sendToMtsLink: true }),
+          body: JSON.stringify({
+            ...changed,
+            ...(extraTeamsPayload.length > 0
+              ? { additionalTeams: extraTeamsPayload }
+              : {}),
+            sendToMtsLink: true,
+          }),
         },
       );
 
@@ -358,21 +437,26 @@ export function IncidentAssignment({
       }
 
       if (!response.ok) throw new Error("PATCH failed");
-      const result: { ok: boolean; mtsLinkSent?: boolean; recipient?: string } =
-        await response.json();
+      const result: {
+        ok: boolean;
+        mtsLinkSent?: boolean;
+        recipient?: string;
+        coTeamsSent?: string[];
+      } = await response.json();
 
       if (!result.ok) throw new Error("PATCH failed");
       setDraft(null);
+      setAdditionalTeams([]);
 
       if (result.mtsLinkSent) {
+        const extraCount = result.coTeamsSent?.length ?? 0;
+        const recipientPart = result.recipient
+          ? " ответственному " + result.recipient
+          : "";
+        const extraPart =
+          extraCount > 0 ? ` и ещё в ${extraCount} подр.` : "";
         setSuccess(
-          result.recipient
-            ? "Данные по " +
-                incident.id +
-                " отправлены ответственному " +
-                result.recipient +
-                " в МТС Link."
-            : "Данные по " + incident.id + " отправлены в МТС Link.",
+          `Данные по ${incident.id} отправлены${recipientPart}${extraPart} в МТС Link.`,
         );
       } else {
         setMessage("Правки сохранены. Отправка в МТС Link не подтверждена.");
@@ -383,6 +467,7 @@ export function IncidentAssignment({
       );
     } finally {
       void client.invalidateQueries({ queryKey: ["incidents"] });
+      void client.invalidateQueries({ queryKey: ["ai", "digest"] });
       void client.invalidateQueries({ queryKey: linkKey });
       void client.invalidateQueries({
         queryKey: ["incident-history", incident.id],
@@ -396,6 +481,18 @@ export function IncidentAssignment({
     ? DUTY_ASSIGNEES.find((item) => item.employee === draft.assigneeEmployee)
     : undefined;
 
+  const isCriticalDraft = Boolean(
+    draft &&
+      (draft.priority === "critical" || incident.groups.includes("CRITICAL")),
+  );
+
+  const availableCoTeams = Array.from(
+    new Set([...DEPARTMENT_OPTIONS, ...additionalTeams]),
+  ).filter(
+    (team) =>
+      team.toLowerCase() !== (draft?.assigneeTeam.trim().toLowerCase() ?? ""),
+  );
+
   return (
     <div className="space-y-3">
       {draft ? (
@@ -407,10 +504,9 @@ export function IncidentAssignment({
           }}
         >
           {aiSuggestion && (
-            <div className="space-y-2 rounded-control border border-mts-blue/30 bg-mts-blue/5 p-3">
-              <p className="flex items-center gap-1.5 text-label-sm font-semibold text-[#005EC4]">
-                <Sparkles className="size-3.5 shrink-0" aria-hidden="true" />
-                Совет ИИ (решение принимает координатор)
+            <div className="space-y-2 rounded-control border border-mts-blue/30 bg-card p-3">
+              <p className="text-label-sm font-semibold text-[#005EC4]">
+                Рекомендация ИИ · решение принимает координатор
               </p>
               <p className="text-label-md">
                 <strong>{aiSuggestion.employee}</strong> · {aiSuggestion.team}
@@ -418,7 +514,7 @@ export function IncidentAssignment({
               <Button
                 type="button"
                 variant="outline"
-                className="h-8 rounded-control border-mts-blue/30 bg-card px-3 text-label-sm text-[#005EC4] hover:bg-mts-blue hover:text-white"
+                className="h-8 rounded-control border-mts-blue/35 bg-card px-3 text-label-sm text-[#005EC4] hover:bg-mts-blue hover:text-white"
                 onClick={() =>
                   setDraft({
                     ...draft,
@@ -427,7 +523,7 @@ export function IncidentAssignment({
                   })
                 }
               >
-                Подставить совет ИИ
+                Подставить рекомендацию
               </Button>
             </div>
           )}
@@ -437,7 +533,9 @@ export function IncidentAssignment({
               Выбрать исполнителя из списка
             </span>
             <Select
-              value={matchedPreset ? matchedPreset.employee : CUSTOM_ASSIGNEE_VALUE}
+              value={
+                matchedPreset ? matchedPreset.employee : CUSTOM_ASSIGNEE_VALUE
+              }
               onValueChange={(value) => {
                 if (value === CUSTOM_ASSIGNEE_VALUE) return;
                 const found = DUTY_ASSIGNEES.find(
@@ -454,13 +552,24 @@ export function IncidentAssignment({
               <SelectTrigger className={selectTriggerClass}>
                 <SelectValue placeholder="Выберите дежурного или введите вручную" />
               </SelectTrigger>
-              <SelectContent className={selectContentClass}>
+              <SelectContent
+                position="popper"
+                side="bottom"
+                align="start"
+                sideOffset={4}
+                collisionPadding={8}
+                className={selectContentClass}
+              >
                 <SelectGroup>
                   <SelectItem value={CUSTOM_ASSIGNEE_VALUE}>
                     Ввести вручную ниже…
                   </SelectItem>
                   {DUTY_ASSIGNEES.map((item) => (
-                    <SelectItem key={item.employee} value={item.employee}>
+                    <SelectItem
+                      key={item.employee}
+                      value={item.employee}
+                      className="whitespace-normal"
+                    >
                       {item.employee} — {item.team}
                     </SelectItem>
                   ))}
@@ -482,7 +591,7 @@ export function IncidentAssignment({
           </label>
 
           <label className="grid gap-1.5 text-label-md font-medium">
-            Команда / подразделение
+            Основная команда / подразделение
             <Input
               value={draft.assigneeTeam}
               placeholder="Например: КЦ ИТ ЦП Billing Platform"
@@ -493,51 +602,143 @@ export function IncidentAssignment({
             />
           </label>
 
-          <div className="grid gap-1.5">
-            <span className="text-label-md font-medium">Статус</span>
-            <Select
-              disabled={incident.status === "closed"}
-              value={draft.status}
-              onValueChange={(value) =>
-                setDraft({ ...draft, status: value as IncidentStatus })
-              }
-            >
-              <SelectTrigger className={selectTriggerClass}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className={selectContentClass}>
-                <SelectGroup>
-                  {Object.entries(statusLabels).map(([value, label]) => (
-                    <SelectItem key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          </div>
+          {isCriticalDraft && (
+            <div className="space-y-2.5 rounded-control border border-mts-red/25 bg-card p-3">
+              <div>
+                <p className="text-label-md font-semibold text-foreground">
+                  Привлечь дополнительные подразделения (критический МИ)
+                </p>
+                <p className="text-label-sm text-muted-foreground">
+                  Отправим уведомление в МТС Link сразу всем выбранным сменам.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {availableCoTeams.map((teamName) => {
+                  const selected = additionalTeams.includes(teamName);
+                  return (
+                    <button
+                      key={teamName}
+                      type="button"
+                      aria-pressed={selected}
+                      onClick={() => toggleAdditionalTeam(teamName)}
+                      className={cn(
+                        "inline-flex cursor-pointer items-center gap-1 rounded-pill border px-2.5 py-1 text-[12px] font-medium transition-colors duration-150",
+                        selected
+                          ? "border-mts-red bg-mts-red text-white"
+                          : "border-border bg-background text-foreground hover:border-mts-muted",
+                      )}
+                    >
+                      {selected && (
+                        <Check className="size-3" aria-hidden="true" />
+                      )}
+                      {teamName}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="flex gap-2">
+                <Input
+                  value={customTeamInput}
+                  placeholder="Добавить другое подразделение…"
+                  className="h-9 rounded-control bg-background text-label-sm font-normal"
+                  onChange={(event) => setCustomTeamInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      addCustomTeam();
+                    }
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-9 shrink-0 rounded-control px-3 text-label-sm"
+                  onClick={addCustomTeam}
+                >
+                  <Plus className="size-3.5" aria-hidden="true" />
+                  Добавить
+                </Button>
+              </div>
+            </div>
+          )}
 
-          <div className="grid gap-1.5">
-            <span className="text-label-md font-medium">Приоритет</span>
-            <Select
-              value={draft.priority}
-              onValueChange={(value) =>
-                setDraft({ ...draft, priority: value as IncidentPriority })
-              }
-            >
-              <SelectTrigger className={selectTriggerClass}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className={selectContentClass}>
-                <SelectGroup>
-                  {Object.entries(priorityLabels).map(([value, label]) => (
-                    <SelectItem key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
+          <div className="grid items-start gap-3 sm:grid-cols-2">
+            <div className="flex flex-col gap-1.5">
+              <span className="text-label-md font-medium">Статус</span>
+              <Select
+                disabled={incident.status === "closed"}
+                value={draft.status}
+                onValueChange={(value) => {
+                  const nextStatus = value as IncidentStatus;
+                  if (DEVELOPER_ONLY_STATUSES.has(nextStatus)) return;
+                  setDraft({ ...draft, status: nextStatus });
+                }}
+              >
+                <SelectTrigger className={selectTriggerClass}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent
+                  position="popper"
+                  side="bottom"
+                  align="start"
+                  sideOffset={4}
+                  collisionPadding={8}
+                  className={selectContentClass}
+                >
+                  <SelectGroup>
+                    {(
+                      Object.entries(statusLabels) as [IncidentStatus, string][]
+                    ).map(([value, label]) => {
+                      const devOnly = DEVELOPER_ONLY_STATUSES.has(value);
+                      return (
+                        <SelectItem
+                          key={value}
+                          value={value}
+                          disabled={devOnly}
+                        >
+                          {devOnly ? `${label} (только разработчик)` : label}
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <span className="text-label-md font-medium">Приоритет</span>
+              <Select
+                value={draft.priority}
+                onValueChange={(value) =>
+                  setDraft({ ...draft, priority: value as IncidentPriority })
+                }
+              >
+                <SelectTrigger className={selectTriggerClass}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent
+                  position="popper"
+                  side="bottom"
+                  align="start"
+                  sideOffset={4}
+                  collisionPadding={8}
+                  className={selectContentClass}
+                >
+                  <SelectGroup>
+                    {Object.entries(priorityLabels).map(([value, label]) => (
+                      <SelectItem key={value} value={value}>
+                        {label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <p className="text-[11px] leading-snug text-muted-foreground sm:col-span-2">
+              Статусы «Решён» и «Закрыт» подтверждает разработчик после
+              устранения.
+            </p>
           </div>
 
           <label className="grid gap-1.5 text-label-md font-medium">
@@ -564,7 +765,10 @@ export function IncidentAssignment({
               type="button"
               variant="ghost"
               disabled={pending}
-              onClick={() => setDraft(null)}
+              onClick={() => {
+                setDraft(null);
+                setAdditionalTeams([]);
+              }}
             >
               Отмена
             </Button>
@@ -577,6 +781,7 @@ export function IncidentAssignment({
           onClick={() => {
             original.current = snapshot(incident);
             setDraft(original.current);
+            setAdditionalTeams([]);
             setMessage("");
           }}
         >

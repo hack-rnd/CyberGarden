@@ -30,10 +30,10 @@
   --color-mts-blue: #007CFF;
   --color-mts-emerald: #00A887;
   --color-mts-amber: #EB4A13;
-  --color-mts-surface: #F4F5F8;
-  --color-mts-border: #DFE3E8;
+  --color-mts-surface: #F2F3F7;
+  --color-mts-border: #E2E5EB;
   --color-mts-ink: #1D2023;
-  --color-mts-muted: #5C6570;
+  --color-mts-muted: #626C77;
 
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -74,7 +74,7 @@
 }
 
 :root {
-  --background: #F4F5F8;
+  --background: #F2F3F7;
   --foreground: #1D2023;
   --card: #FFFFFF;
   --card-foreground: #1D2023;
@@ -85,26 +85,26 @@
   --secondary: #ECEEF2;
   --secondary-foreground: #1D2023;
   --muted: #ECEEF2;
-  --muted-foreground: #5C6570;
+  --muted-foreground: #626C77;
   --accent: #ECEEF2;
   --accent-foreground: #1D2023;
   --destructive: #D9002B;
-  --border: #DFE3E8;
+  --border: #E2E5EB;
   --input: #D5DBE2;
   --ring: #007CFF;
   --chart-1: #FF0032;
   --chart-2: #007CFF;
   --chart-3: #00A887;
   --chart-4: #EB4A13;
-  --chart-5: #5C6570;
+  --chart-5: #626C77;
   --radius: 0.75rem;
   --sidebar: #FFFFFF;
   --sidebar-foreground: #1D2023;
   --sidebar-primary: #FF0032;
   --sidebar-primary-foreground: #FFFFFF;
-  --sidebar-accent: #F4F5F8;
+  --sidebar-accent: #F2F3F7;
   --sidebar-accent-foreground: #1D2023;
-  --sidebar-border: #DFE3E8;
+  --sidebar-border: #E2E5EB;
   --sidebar-ring: #007CFF;
 }
 
@@ -120,74 +120,41 @@
   }
 }
 
-@keyframes critical-card-pulse {
+@keyframes critical-banner-flash {
   0%, 100% {
-    box-shadow: 0 0 0 1.5px #FF0032, 0 0 0 0 rgba(255, 0, 50, 0.45);
+    background-color: rgba(255, 0, 50, 0.06);
+    border-color: #FF0032;
   }
   50% {
-    box-shadow: 0 0 0 2px #D9002B, 0 0 0 6px rgba(255, 0, 50, 0);
+    background-color: rgba(255, 0, 50, 0.18);
+    border-color: #B80024;
   }
 }
 
-@keyframes critical-banner-flash {
+@keyframes monitor-critical-pulse {
   0%, 100% {
-    background-color: rgba(255, 0, 50, 0.12);
-    box-shadow: 0 0 0 2px #FF0032, 0 0 20px rgba(255, 0, 50, 0.35);
+    background-color: #241418;
+    border-color: #FF0032;
   }
   50% {
-    background-color: rgba(255, 0, 50, 0.28);
-    box-shadow: 0 0 0 3px #D9002B, 0 0 32px rgba(255, 0, 50, 0.65);
-  }
-}
-
-@keyframes critical-banner-flash {
-  0%, 100% {
-    background-color: rgba(255, 0, 50, 0.12);
-    box-shadow: 0 0 0 2px #FF0032, 0 0 20px rgba(255, 0, 50, 0.35);
-  }
-  50% {
-    background-color: rgba(255, 0, 50, 0.28);
-    box-shadow: 0 0 0 3px #D9002B, 0 0 32px rgba(255, 0, 50, 0.65);
-  }
-}
-
-@keyframes critical-banner-flash {
-  0%, 100% {
-    background-color: rgba(255, 0, 50, 0.12);
-    box-shadow: 0 0 0 2px #FF0032, 0 0 20px rgba(255, 0, 50, 0.35);
-  }
-  50% {
-    background-color: rgba(255, 0, 50, 0.28);
-    box-shadow: 0 0 0 3px #D9002B, 0 0 32px rgba(255, 0, 50, 0.65);
+    background-color: #3A161F;
+    border-color: #B80024;
   }
 }
 
 @keyframes critical-row-pulse {
   0%, 100% {
-    background-color: rgba(255, 0, 50, 0.08);
-    outline-color: rgba(255, 0, 50, 0.9);
+    background-color: rgba(255, 0, 50, 0.05);
   }
   50% {
-    background-color: rgba(255, 0, 50, 0.22);
-    outline-color: rgba(217, 0, 43, 0.45);
-  }
-}
-
-@keyframes critical-dot-pulse {
-  0%, 100% {
-    transform: scale(1);
-    opacity: 1;
-  }
-  50% {
-    transform: scale(1.45);
-    opacity: 0.45;
+    background-color: rgba(255, 0, 50, 0.14);
   }
 }
 
 @keyframes table-page-in {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateY(6px);
   }
   to {
     opacity: 1;
@@ -195,28 +162,24 @@
   }
 }
 
-.critical-pulse-ring {
-  border-color: #FF0032 !important;
-  animation: critical-card-pulse 1.6s ease-in-out infinite;
-}
-
 .critical-banner-flash {
-  border-color: #FF0032 !important;
   animation: critical-banner-flash 1.2s ease-in-out infinite;
 }
 
-.critical-row-pulse {
-  outline: 2px solid #FF0032;
-  outline-offset: -2px;
-  animation: critical-row-pulse 1.6s ease-in-out infinite;
+.monitor-critical-pulse {
+  animation: monitor-critical-pulse 1.2s ease-in-out infinite;
 }
 
-.critical-dot-pulse {
-  animation: critical-dot-pulse 1.4s ease-in-out infinite;
+.critical-pulse-ring {
+  border-color: #FF0032 !important;
+}
+
+.critical-row-pulse {
+  animation: critical-row-pulse 1.3s ease-in-out infinite;
 }
 
 .animate-table-page {
-  animation: table-page-in 0.25s ease-in-out;
+  animation: table-page-in 0.2s ease-in-out;
 }
 
 @keyframes sheet-panel-open {
@@ -245,57 +208,29 @@
 [data-slot="sheet-content"][data-side="top"] { --sheet-offset-y: -28px; }
 
 [data-slot="sheet-content"][data-state="open"] {
-  animation: sheet-panel-open 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: sheet-panel-open 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 [data-slot="sheet-content"][data-state="closed"] {
-  animation: sheet-panel-close 200ms ease-in both;
+  animation: sheet-panel-close 180ms ease-in both;
 }
 
 [data-slot="sheet-overlay"][data-state="open"] {
-  animation: sheet-overlay-open 240ms ease-out both;
+  animation: sheet-overlay-open 220ms ease-out both;
 }
 
 [data-slot="sheet-overlay"][data-state="closed"] {
-  animation: sheet-overlay-close 200ms ease-in both;
+  animation: sheet-overlay-close 180ms ease-in both;
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .critical-banner-flash,
+  .monitor-critical-pulse,
   .critical-pulse-ring,
   .critical-row-pulse,
-  .critical-dot-pulse,
-  .critical-banner-flash,
   .animate-table-page,
   [data-slot="sheet-content"][data-state],
   [data-slot="sheet-overlay"][data-state] {
     animation: none;
-  }
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  [data-slot="sheet-content"][data-state="open"] {
-    animation-duration: 420ms;
-    animation-timing-function: cubic-bezier(0.33, 0, 0.22, 1);
-  }
-
-  [data-slot="sheet-content"][data-state="open"][data-side="right"] {
-    --sheet-offset-x: 56px;
-  }
-
-  [data-slot="sheet-content"][data-state="open"][data-side="left"] {
-    --sheet-offset-x: -56px;
-  }
-
-  [data-slot="sheet-content"][data-state="open"][data-side="bottom"] {
-    --sheet-offset-y: 56px;
-  }
-
-  [data-slot="sheet-content"][data-state="open"][data-side="top"] {
-    --sheet-offset-y: -56px;
-  }
-
-  [data-slot="sheet-overlay"][data-state="open"] {
-    animation-duration: 340ms;
-    animation-timing-function: ease-in-out;
   }
 }
